@@ -1,0 +1,17 @@
+services:
+  pingador:
+    build: .
+    container_name: pingador
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Planilha de inventario "de verdade" na VM, montada no caminho que o
+      # container le/observa (ver PINGADOR_EXCEL_PATH no Dockerfile).
+      - "./Inventario IP.xlsx:/app/data/Inventario IP.xlsx"
+    environment:
+      - PINGADOR_EXCEL_SYNC_INTERVAL=60
+      - PINGADOR_EXCEL_DEFAULT_FREQUENCY=15
+    # Descomente para pingar equipamentos na mesma rede da VM sem NAT
+    # (mais simples quando o Proxmox usa uma bridge de rede local):
+    # network_mode: host
