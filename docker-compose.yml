@@ -3,8 +3,11 @@ services:
     build: .
     container_name: pingador
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # Sem "ports": o container fica acessível só via rede Docker compartilhada
+    # com o Nginx Proxy Manager (npm_network abaixo), nem localhost fica exposto.
+    networks:
+      - default
+      - npm_network
     volumes:
       # Planilha de inventario "de verdade" na VM, montada no caminho que o
       # container le/observa (ver PINGADOR_EXCEL_PATH no Dockerfile).
@@ -15,3 +18,11 @@ services:
     # Descomente para pingar equipamentos na mesma rede da VM sem NAT
     # (mais simples quando o Proxmox usa uma bridge de rede local):
     # network_mode: host
+
+networks:
+  default: {}
+  # Rede do Nginx Proxy Manager (definida em /opt/nginx-proxy-manager na VM).
+  # external: true = não recriar, só se conectar à que já existe.
+  npm_network:
+    external: true
+    name: nginx-proxy-manager_default

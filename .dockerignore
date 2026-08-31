@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .git/
 .claude/
+# A planilha entra por volume no compose, nao precisa ir pra imagem.
+Inventario IP.xlsx
+# Documentos de apoio, nao fazem parte do runtime.
+*.pdf
+contexto-deploy-vm.md
+README.md
