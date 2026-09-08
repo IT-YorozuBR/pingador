@@ -3,8 +3,10 @@ FROM python:3.12-slim
 # iputils-ping fornece o binario `ping` usado por monitor.py para checar
 # os equipamentos via ICMP. Ele vem setuid root no Debian, entao continua
 # funcionando mesmo com o container rodando como usuario nao-root.
+# tzdata: sem ele a imagem slim ignora a variavel TZ e o horario dos
+# registros (SQLite, eventos) fica em UTC (3h a frente de Brasilia).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping \
+    && apt-get install -y --no-install-recommends iputils-ping tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,6 +25,7 @@ USER pingador
 ENV PINGADOR_PORT=8000 \
     PINGADOR_EXCEL_PATH="/app/data/Inventario IP.xlsx" \
     PINGADOR_DB_PATH="/app/data/pingador.db" \
+    TZ=America/Sao_Paulo \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000

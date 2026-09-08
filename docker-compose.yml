@@ -16,6 +16,8 @@ services:
       # Volume nomeado para o historico sobreviver a recriacao do container.
       - "pingador_db:/app/data/db"
     environment:
+      # Fuso do container: sem isso os horarios ficam em UTC (3h a frente).
+      - TZ=America/Sao_Paulo
       - PINGADOR_EXCEL_SYNC_INTERVAL=60
       - PINGADOR_EXCEL_DEFAULT_FREQUENCY=15
       - PINGADOR_DB_PATH=/app/data/db/pingador.db
