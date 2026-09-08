@@ -31,6 +31,11 @@ def timeline_page():
     return render_template("timeline.html")
 
 
+@app.route("/topology")
+def topology_page():
+    return render_template("topology.html")
+
+
 # ---------------- API: equipamentos ----------------
 
 @app.route("/api/equipments", methods=["GET"])
@@ -202,6 +207,98 @@ def api_timeline():
 def api_timeline_bounds():
     """Extremos + contagem por tipo, usados para calibrar o zoom inicial."""
     return jsonify(db.events_bounds())
+
+
+# ---------------- API: topologia de rede ----------------
+
+@app.route("/api/topology", methods=["GET"])
+def api_topology():
+    """
+    Alimenta a pagina de Topologia. NAO executa ping: apenas observa o estado
+    que o monitoramento ja produz (mesma fonte do dashboard).
+
+    - devices: os mesmos equipamentos de store.list_equipments(), com a posicao
+      salva (por IP) quando houver.
+    - connections: relacionamentos cadastrados pelo usuario, filtrando os que
+      apontam para equipamentos que nao existem mais.
+    - summary: total / online / offline (mesma contagem do /api/dashboard).
+    """
+    equipments = store.list_equipments()
+    layout = db.get_device_layout()
+    present_ips = set()
+    devices = []
+    for eq in equipments:
+        present_ips.add(eq.ip)
+        pos = layout.get(eq.ip)
+        devices.append(
+            {
+                "id": eq.id,
+                "ip": eq.ip,
+                "name": eq.name,
+                "category": eq.category,
+                "description": eq.description,
+                "status": eq.status,
+                "monitoring_active": eq.monitoring_active,
+                "response_time_ms": eq.last_response_time_ms,
+                "last_checked": eq.last_checked.isoformat() if eq.last_checked else None,
+                "x": pos["x"] if pos else None,
+                "y": pos["y"] if pos else None,
+            }
+        )
+
+    connections = [
+        c
+        for c in db.list_connections()
+        if c["source_ip"] in present_ips and c["target_ip"] in present_ips
+    ]
+
+    total = len(equipments)
+    online = sum(1 for e in equipments if e.status == STATUS_ONLINE)
+    offline = sum(1 for e in equipments if e.status == STATUS_OFFLINE)
+
+    return jsonify(
+        {
+            "devices": devices,
+            "connections": connections,
+            "summary": {
+                "total": total,
+                "online": online,
+                "offline": offline,
+                "waiting": total - online - offline,
+            },
+        }
+    )
+
+
+@app.route("/api/topology/layout", methods=["POST"])
+def api_topology_layout():
+    """Salva as posicoes dos nos. Body: { "positions": { "<ip>": {"x":..,"y":..} } }."""
+    payload = request.get_json(silent=True) or {}
+    positions = payload.get("positions")
+    if not isinstance(positions, dict):
+        return jsonify({"error": "positions deve ser um objeto { ip: {x, y} }."}), 400
+    saved = db.save_device_layout(positions)
+    return jsonify({"saved": saved})
+
+
+@app.route("/api/topology/connections", methods=["POST"])
+def api_topology_add_connection():
+    payload = request.get_json(silent=True) or {}
+    src = (payload.get("source_ip") or "").strip()
+    tgt = (payload.get("target_ip") or "").strip()
+    if not src or not tgt or src == tgt:
+        return jsonify({"error": "source_ip e target_ip distintos sao obrigatorios."}), 400
+    result = db.add_connection(src, tgt)
+    if not result:
+        return jsonify({"error": "Nao foi possivel criar a conexao."}), 400
+    return jsonify(result), 201
+
+
+@app.route("/api/topology/connections/<int:conn_id>", methods=["DELETE"])
+def api_topology_delete_connection(conn_id):
+    if not db.delete_connection(conn_id):
+        return jsonify({"error": "Conexao nao encontrada."}), 404
+    return jsonify({"ok": True})
 
 
 # ---------------- API: dashboard ----------------

@@ -33,9 +33,30 @@ h1, h2, h3 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 24px;
     padding: 20px 32px;
     border-bottom: 1px solid var(--border);
 }
+
+.topnav {
+    display: flex;
+    gap: 4px;
+    margin-right: auto;
+}
+
+.topnav a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.78rem;
+    letter-spacing: 0.05em;
+    padding: 7px 12px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.topnav a:hover { color: var(--text); }
+.topnav a.active { color: var(--green); border-color: var(--border-strong); }
 
 .brand {
     display: flex;

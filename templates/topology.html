@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pingatron - Topologia de Rede</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/topology.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+</head>
+<body class="topo-body">
+    <header class="topo-topbar">
+        <div class="topo-brand">
+            <span class="topo-brand-icon">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="5" cy="6" r="2.4"></circle><circle cx="19" cy="6" r="2.4"></circle>
+                    <circle cx="12" cy="18" r="2.4"></circle>
+                    <path d="M5 8.4V12a2 2 0 0 0 2 2h4M19 8.4V12a2 2 0 0 1-2 2h-4"></path>
+                </svg>
+            </span>
+            <h1>TOPOLOGIA</h1>
+        </div>
+
+        <nav class="topo-nav">
+            <a href="/">Painel</a>
+            <a href="/timeline">Linha do tempo</a>
+            <a href="/topology" class="active">Topologia</a>
+        </nav>
+
+        <div class="topo-summary" id="topo-summary">
+            <span class="topo-sum"><b id="sum-total">-</b> TOTAL</span>
+            <span class="topo-sum online"><span class="dot dot-online"></span><b id="sum-online">-</b> ONLINE</span>
+            <span class="topo-sum offline"><span class="dot dot-offline"></span><b id="sum-offline">-</b> OFFLINE</span>
+        </div>
+    </header>
+
+    <section class="topo-controls">
+        <input type="search" id="topo-search" class="topo-input" placeholder="&#128269; Pesquisar equipamento ou IP...">
+        <select id="topo-filter-status" class="topo-input">
+            <option value="">Todos os status</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+            <option value="aguardando">Aguardando</option>
+        </select>
+        <select id="topo-filter-type" class="topo-input">
+            <option value="">Todos os tipos</option>
+        </select>
+        <span class="topo-controls-grow"></span>
+        <button id="topo-arrange" class="btn btn-secondary btn-small" type="button">Organizar automaticamente</button>
+        <button id="topo-edit" class="btn btn-primary btn-small" type="button">Editar topologia</button>
+    </section>
+
+    <main class="topo-stage">
+        <div id="topo-cy"></div>
+
+        <div class="topo-editbar" id="topo-editbar" hidden>
+            <span class="topo-editbar-label">MODO EDICAO</span>
+            <button id="topo-connect" class="btn btn-secondary btn-small" type="button">Conectar</button>
+            <button id="topo-del-conn" class="btn btn-danger btn-small" type="button">Remover conexao</button>
+            <span class="topo-editbar-hint" id="topo-edit-hint">arraste os nos &bull; "Conectar": clique no equipamento de cima e depois no de baixo</span>
+        </div>
+
+        <div class="topo-zoom">
+            <button id="topo-zoom-in" type="button" title="Aproximar">+</button>
+            <button id="topo-zoom-out" type="button" title="Afastar">&minus;</button>
+            <button id="topo-fit" type="button" title="Ajustar a tela">&#9974;</button>
+        </div>
+
+        <div class="topo-empty" id="topo-empty" hidden>Nenhum equipamento cadastrado no sistema.</div>
+    </main>
+
+    <aside class="topo-side" id="topo-side" hidden>
+        <div class="topo-side-head">
+            <h2 id="ts-name">&mdash;</h2>
+            <button id="ts-close" type="button" aria-label="Fechar">&#10005;</button>
+        </div>
+        <div class="topo-side-grid">
+            <div><span class="ts-label">TIPO</span><span id="ts-type">&mdash;</span></div>
+            <div><span class="ts-label">IP</span><span id="ts-ip">&mdash;</span></div>
+            <div><span class="ts-label">STATUS</span><span id="ts-status">&mdash;</span></div>
+            <div><span class="ts-label">LATENCIA</span><span id="ts-latency">&mdash;</span></div>
+            <div><span class="ts-label">ULTIMA VERIFICACAO</span><span id="ts-checked">&mdash;</span></div>
+            <div><span class="ts-label">DESCRICAO</span><span id="ts-desc">&mdash;</span></div>
+        </div>
+        <a class="btn btn-secondary btn-small" id="ts-details" href="/" target="_blank" rel="noopener">Ver detalhes no painel</a>
+    </aside>
+
+    <div class="topo-toast" id="topo-toast" hidden></div>
+
+    <script src="{{ url_for('static', filename='js/topology.js') }}"></script>
+</body>
+</html>

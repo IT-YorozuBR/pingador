@@ -98,6 +98,27 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_events_ts       ON events (ts);
             CREATE INDEX IF NOT EXISTS idx_events_kind_ts  ON events (kind, ts);
             CREATE INDEX IF NOT EXISTS idx_events_eq       ON events (equipment_id);
+
+            -- Topologia de rede: posicao dos nos e conexoes cadastradas pelo
+            -- usuario. Chaveado por IP porque o id do equipamento e em memoria
+            -- e pode ser reatribuido no restart / sincronizacao da planilha.
+            CREATE TABLE IF NOT EXISTS device_layout (
+                ip         TEXT PRIMARY KEY,
+                pos_x      REAL,
+                pos_y      REAL,
+                updated_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS topology_connections (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_ip  TEXT NOT NULL,
+                target_ip  TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_topo_conn_src ON topology_connections (source_ip);
+            CREATE INDEX IF NOT EXISTS idx_topo_conn_tgt ON topology_connections (target_ip);
             """
         )
         _conn.commit()
@@ -477,6 +498,106 @@ def get_availability_series(
             }
         )
     return series
+
+
+# --------------------------- topologia de rede ---------------------------
+
+def get_device_layout() -> dict:
+    """Posicoes salvas dos nos: { ip: {"x": float, "y": float} }."""
+    conn = _require_conn()
+    with _lock:
+        rows = conn.execute("SELECT ip, pos_x, pos_y FROM device_layout").fetchall()
+    return {
+        r["ip"]: {"x": r["pos_x"], "y": r["pos_y"]}
+        for r in rows
+        if r["pos_x"] is not None and r["pos_y"] is not None
+    }
+
+
+def save_device_layout(positions: dict) -> int:
+    """Upsert das posicoes. `positions`: { ip: {"x": .., "y": ..} }."""
+    if not positions:
+        return 0
+    now = datetime.now().isoformat()
+    conn = _require_conn()
+    n = 0
+    with _lock:
+        try:
+            for ip, p in positions.items():
+                if not ip or not isinstance(p, dict):
+                    continue
+                x, y = p.get("x"), p.get("y")
+                if x is None or y is None:
+                    continue
+                conn.execute(
+                    "INSERT INTO device_layout (ip, pos_x, pos_y, updated_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(ip) DO UPDATE SET "
+                    "  pos_x = excluded.pos_x, pos_y = excluded.pos_y, "
+                    "  updated_at = excluded.updated_at",
+                    (str(ip), float(x), float(y), now),
+                )
+                n += 1
+            conn.commit()
+        except (sqlite3.Error, TypeError, ValueError):
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+    return n
+
+
+def list_connections() -> list[dict]:
+    conn = _require_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT id, source_ip, target_ip FROM topology_connections ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_connection(source_ip: str, target_ip: str) -> Optional[dict]:
+    """Cria uma conexao (nao-direcionada); se o par ja existir, devolve o existente."""
+    if not source_ip or not target_ip or source_ip == target_ip:
+        return None
+    conn = _require_conn()
+    now = datetime.now().isoformat()
+    with _lock:
+        try:
+            existing = conn.execute(
+                "SELECT id, source_ip, target_ip FROM topology_connections "
+                "WHERE (source_ip = ? AND target_ip = ?) "
+                "   OR (source_ip = ? AND target_ip = ?) LIMIT 1",
+                (source_ip, target_ip, target_ip, source_ip),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            cur = conn.execute(
+                "INSERT INTO topology_connections "
+                "(source_ip, target_ip, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (source_ip, target_ip, now, now),
+            )
+            conn.commit()
+            return {"id": cur.lastrowid, "source_ip": source_ip, "target_ip": target_ip}
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            return None
+
+
+def delete_connection(conn_id: int) -> bool:
+    conn = _require_conn()
+    with _lock:
+        try:
+            cur = conn.execute(
+                "DELETE FROM topology_connections WHERE id = ?", (conn_id,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except sqlite3.Error:
+            return False
 
 
 # inicializa o schema assim que o modulo e importado
