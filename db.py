@@ -29,6 +29,10 @@ DB_PATH = os.environ.get(
 # removidas periodicamente para o arquivo nao crescer sem limite.
 RETENTION_DAYS = int(os.environ.get("PINGADOR_DB_RETENTION_DAYS", "30"))
 
+# Eventos (quedas / recuperacoes / cadastros / remocoes) sao poucos e mais
+# valiosos que as amostras de ping, entao ficam guardados por mais tempo.
+EVENTS_RETENTION_DAYS = int(os.environ.get("PINGADOR_EVENTS_RETENTION_DAYS", "180"))
+
 # A cada N escritas, dispara uma limpeza das amostras vencidas.
 _PRUNE_EVERY = 500
 
@@ -76,6 +80,24 @@ def init_db() -> None:
                 last_response_time_ms REAL,
                 updated_at            TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS events (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                equipment_id     INTEGER,
+                equipment_name   TEXT,
+                ip               TEXT,
+                category         TEXT,
+                kind             TEXT NOT NULL,   -- down | up | created | removed
+                previous_status  TEXT,
+                current_status   TEXT,
+                response_time_ms REAL,
+                duration_seconds REAL,            -- para 'up': quanto durou a queda
+                ts               TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_events_ts       ON events (ts);
+            CREATE INDEX IF NOT EXISTS idx_events_kind_ts  ON events (kind, ts);
+            CREATE INDEX IF NOT EXISTS idx_events_eq       ON events (equipment_id);
             """
         )
         _conn.commit()
@@ -159,15 +181,23 @@ def record_ping(
 
 
 def _prune_locked() -> None:
-    if RETENTION_DAYS <= 0:
-        return
-    cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).isoformat()
-    _conn.execute("DELETE FROM ping_samples WHERE ts < ?", (cutoff,))
+    if RETENTION_DAYS > 0:
+        cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).isoformat()
+        _conn.execute("DELETE FROM ping_samples WHERE ts < ?", (cutoff,))
+    if EVENTS_RETENTION_DAYS > 0:
+        ev_cutoff = (datetime.now() - timedelta(days=EVENTS_RETENTION_DAYS)).isoformat()
+        _conn.execute("DELETE FROM events WHERE ts < ?", (ev_cutoff,))
     _conn.commit()
 
 
 def forget_equipment(equipment_id: int) -> None:
-    """Remove historico e snapshot de um equipamento excluido."""
+    """
+    Remove amostras de ping e o snapshot de um equipamento excluido.
+
+    Os eventos (queda/recuperacao/cadastro/remocao) sao mantidos de
+    proposito: a linha do tempo continua mostrando o historico daquele
+    equipamento mesmo depois de ele sair do monitoramento.
+    """
     conn = _require_conn()
     with _lock:
         try:
@@ -176,6 +206,132 @@ def forget_equipment(equipment_id: int) -> None:
             conn.commit()
         except sqlite3.Error:
             pass
+
+
+# --------------------------- eventos / linha do tempo ---------------------------
+
+_VALID_EVENT_KINDS = ("down", "up", "created", "removed")
+
+
+def record_event(
+    equipment_id: Optional[int],
+    equipment_name: Optional[str],
+    ip: Optional[str],
+    kind: str,
+    *,
+    category: Optional[str] = None,
+    previous_status: Optional[str] = None,
+    current_status: Optional[str] = None,
+    response_time_ms: Optional[float] = None,
+    duration_seconds: Optional[float] = None,
+    ts: Optional[datetime] = None,
+    dedupe_created_by_ip: bool = False,
+) -> None:
+    """
+    Registra um evento na linha do tempo. `kind`: down | up | created | removed.
+
+    Se `dedupe_created_by_ip` e True (usado na carga em massa vinda da
+    planilha), nao registra um 'created' se ja houver um para o mesmo IP,
+    evitando encher a linha do tempo a cada reinicializacao.
+    """
+    if kind not in _VALID_EVENT_KINDS:
+        return
+    now_iso = (ts or datetime.now()).isoformat()
+    conn = _require_conn()
+    with _lock:
+        try:
+            if dedupe_created_by_ip and kind == "created":
+                seen = conn.execute(
+                    "SELECT 1 FROM events WHERE ip = ? AND kind = 'created' LIMIT 1",
+                    (ip,),
+                ).fetchone()
+                if seen:
+                    return
+            conn.execute(
+                "INSERT INTO events ("
+                "  equipment_id, equipment_name, ip, category, kind, "
+                "  previous_status, current_status, response_time_ms, "
+                "  duration_seconds, ts"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    equipment_id, equipment_name, ip, category, kind,
+                    previous_status, current_status, response_time_ms,
+                    duration_seconds, now_iso,
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+
+
+def query_events(
+    *,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    kinds: Optional[list[str]] = None,
+    equipment_id: Optional[int] = None,
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 3000,
+    order: str = "asc",
+) -> list[dict]:
+    conn = _require_conn()
+    clauses: list[str] = []
+    params: list = []
+
+    if since:
+        clauses.append("ts >= ?")
+        params.append(since)
+    if until:
+        clauses.append("ts <= ?")
+        params.append(until)
+    if kinds:
+        kinds = [k for k in kinds if k in _VALID_EVENT_KINDS]
+        if kinds:
+            clauses.append(f"kind IN ({','.join('?' * len(kinds))})")
+            params.extend(kinds)
+    if equipment_id is not None:
+        clauses.append("equipment_id = ?")
+        params.append(equipment_id)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if search:
+        clauses.append("(equipment_name LIKE ? OR ip LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like])
+
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    direction = "DESC" if str(order).lower() == "desc" else "ASC"
+    limit = max(1, min(int(limit), 20000))
+
+    with _lock:
+        rows = conn.execute(
+            f"SELECT * FROM events{where} ORDER BY ts {direction}, id {direction} LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def events_bounds() -> dict:
+    """Extremos e contagens da linha do tempo, para calibrar o zoom inicial."""
+    conn = _require_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts, COUNT(*) AS total FROM events"
+        ).fetchone()
+        by_kind = conn.execute(
+            "SELECT kind, COUNT(*) AS c FROM events GROUP BY kind"
+        ).fetchall()
+    return {
+        "first_ts": row["first_ts"],
+        "last_ts": row["last_ts"],
+        "total": row["total"] or 0,
+        "by_kind": {r["kind"]: r["c"] for r in by_kind},
+    }
 
 
 # --------------------------- leitura ---------------------------

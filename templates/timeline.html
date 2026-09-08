@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pingador - Linha do Tempo de Eventos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/timeline.css') }}">
+</head>
+<body class="tl-body">
+    <header class="tl-topbar">
+        <a class="tl-back" href="/">&larr; PAINEL</a>
+        <div class="tl-title">
+            <span class="tl-title-icon">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <polyline points="12 7 12 12 16 14"></polyline>
+                </svg>
+            </span>
+            <div>
+                <h1>LINHA DO TEMPO</h1>
+                <p>Quedas, recuperacoes e cadastros &bull; arraste para navegar no tempo</p>
+            </div>
+        </div>
+        <div class="tl-topbar-right">
+            <span class="tl-clock" id="tl-clock">--:--:--</span>
+        </div>
+    </header>
+
+    <section class="tl-controls">
+        <div class="tl-chips" id="tl-kind-chips">
+            <button class="tl-chip active" data-kind="down" type="button">
+                <span class="tl-chip-dot k-down"></span>QUEDAS <b id="cnt-down">0</b>
+            </button>
+            <button class="tl-chip active" data-kind="up" type="button">
+                <span class="tl-chip-dot k-up"></span>RECUPERACOES <b id="cnt-up">0</b>
+            </button>
+            <button class="tl-chip active" data-kind="created" type="button">
+                <span class="tl-chip-dot k-created"></span>CADASTROS <b id="cnt-created">0</b>
+            </button>
+            <button class="tl-chip active" data-kind="removed" type="button">
+                <span class="tl-chip-dot k-removed"></span>REMOCOES <b id="cnt-removed">0</b>
+            </button>
+        </div>
+
+        <div class="tl-filters">
+            <input type="search" id="tl-search" class="tl-input" placeholder="Buscar nome ou IP...">
+            <select id="tl-category" class="tl-input">
+                <option value="">Todas as bases</option>
+            </select>
+            <div class="tl-range" id="tl-range" role="group" aria-label="Janela de tempo">
+                <button data-range="1h" type="button">1h</button>
+                <button data-range="6h" type="button">6h</button>
+                <button data-range="24h" class="active" type="button">24h</button>
+                <button data-range="7d" type="button">7d</button>
+                <button data-range="30d" type="button">30d</button>
+                <button data-range="all" type="button">TUDO</button>
+            </div>
+            <div class="tl-zoom" role="group" aria-label="Zoom">
+                <button id="tl-zoom-out" type="button" title="Afastar (Ctrl+scroll)">&minus;</button>
+                <button id="tl-zoom-in" type="button" title="Aproximar (Ctrl+scroll)">+</button>
+                <button id="tl-fit" type="button">AJUSTAR</button>
+            </div>
+            <button id="tl-now-btn" class="tl-now-btn" type="button">&#9654; AGORA</button>
+            <label class="tl-follow"><input type="checkbox" id="tl-follow" checked> seguir</label>
+        </div>
+    </section>
+
+    <main class="tl-stage" id="tl-stage">
+        <div class="tl-vignette"></div>
+        <div class="tl-scan" id="tl-scan"></div>
+        <div class="tl-grid" id="tl-grid"></div>
+
+        <div class="tl-lanes">
+            <div class="tl-lane lane-0"><span class="tl-lane-label">QUEDAS</span></div>
+            <div class="tl-lane lane-1"><span class="tl-lane-label">RECUPERACOES</span></div>
+            <div class="tl-lane lane-2"><span class="tl-lane-label">CADASTROS / REMOCOES</span></div>
+        </div>
+
+        <div class="tl-outages" id="tl-outages"></div>
+        <div class="tl-nodes" id="tl-nodes"></div>
+
+        <div class="tl-nowline" id="tl-nowline"><span>AGORA</span></div>
+        <div class="tl-axis" id="tl-axis"></div>
+
+        <div class="tl-empty" id="tl-empty" hidden>Nenhum evento no periodo / filtro selecionado.</div>
+        <div class="tl-hint">arraste &#8596; &bull; scroll desloca &bull; Ctrl+scroll d&aacute; zoom &bull; clique num evento para fixar</div>
+    </main>
+
+    <div class="tl-pop" id="tl-pop" hidden></div>
+
+    <div class="tl-modal-overlay" id="tl-modal-overlay" hidden>
+        <div class="tl-modal" id="tl-modal" role="dialog" aria-modal="true">
+            <div class="tl-modal-head">
+                <div class="tl-modal-titles">
+                    <span class="tl-modal-kind" id="tlm-kind"></span>
+                    <h2 id="tlm-name">&mdash;</h2>
+                    <p id="tlm-sub">&mdash;</p>
+                </div>
+                <button class="tl-modal-close" id="tlm-close" type="button">FECHAR</button>
+            </div>
+
+            <div class="tl-modal-windows" id="tlm-windows" role="group" aria-label="Janela de tempo">
+                <button data-window="24h" class="active" type="button">24h</button>
+                <button data-window="7d" type="button">7d</button>
+                <button data-window="30d" type="button">30d</button>
+                <button data-window="all" type="button">TUDO</button>
+            </div>
+
+            <div class="tl-modal-stats" id="tlm-stats"></div>
+
+            <div class="tl-modal-events">
+                <h3>Eventos deste equipamento</h3>
+                <div class="tl-modal-eventlist" id="tlm-events"></div>
+            </div>
+
+            <div class="tl-modal-actions">
+                <button id="tlm-isolate" type="button" class="tl-now-btn">&#9673; ISOLAR NA LINHA DO TEMPO</button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="tl-foot">
+        <span id="tl-foot-count">0 eventos</span>
+        <span class="tl-foot-sep">&bull;</span>
+        <span id="tl-foot-span">&mdash;</span>
+        <span class="tl-foot-grow"></span>
+        <span id="tl-foot-live" class="tl-foot-live">ATUALIZANDO A CADA 5s</span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/timeline.js') }}"></script>
+</body>
+</html>

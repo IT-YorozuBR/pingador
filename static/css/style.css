@@ -300,6 +300,22 @@ main {
 .timeline-point.down { background: var(--red); }
 .timeline-point.up { background: var(--green); }
 
+.timeline-open-link {
+    color: var(--green);
+    text-decoration: none;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.timeline-open-link:hover {
+    border-color: var(--green);
+    box-shadow: 0 0 10px rgba(52, 214, 122, 0.35);
+}
+
 /* ---------------- Equipamentos ---------------- */
 
 .equipments-header {

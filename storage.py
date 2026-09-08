@@ -92,6 +92,13 @@ class InMemoryStore:
             )
             self.equipments[eq.id] = eq
             self.ping_history[eq.id] = deque(maxlen=PING_HISTORY_MAXLEN)
+            try:
+                db.record_event(
+                    eq.id, eq.name, eq.ip, "created", category=eq.category,
+                    current_status=eq.status,
+                )
+            except Exception:
+                pass
             return eq
 
     def sync_from_excel(self, entries: list[dict]) -> dict:
@@ -128,6 +135,13 @@ class InMemoryStore:
                     )
                     self.equipments[eq.id] = eq
                     self.ping_history[eq.id] = deque(maxlen=PING_HISTORY_MAXLEN)
+                    try:
+                        db.record_event(
+                            eq.id, eq.name, eq.ip, "created", category=eq.category,
+                            current_status=eq.status, dedupe_created_by_ip=True,
+                        )
+                    except Exception:
+                        pass
                     added += 1
                 elif eq.source == "excel":
                     changed = False
@@ -154,10 +168,14 @@ class InMemoryStore:
                 if eq.source == "excel" and eq.ip not in seen_ips
             ]
             for eid in to_remove:
-                del self.equipments[eid]
+                gone = self.equipments.pop(eid)
                 self.ping_history.pop(eid, None)
                 self.events = [e for e in self.events if e.equipment_id != eid]
                 try:
+                    db.record_event(
+                        eid, gone.name, gone.ip, "removed", category=gone.category,
+                        previous_status=gone.status,
+                    )
                     db.forget_equipment(eid)
                 except Exception:
                     pass
@@ -177,10 +195,14 @@ class InMemoryStore:
     def remove_equipment(self, equipment_id: int) -> bool:
         with self._lock:
             if equipment_id in self.equipments:
-                del self.equipments[equipment_id]
+                gone = self.equipments.pop(equipment_id)
                 self.ping_history.pop(equipment_id, None)
                 self.events = [e for e in self.events if e.equipment_id != equipment_id]
                 try:
+                    db.record_event(
+                        equipment_id, gone.name, gone.ip, "removed",
+                        category=gone.category, previous_status=gone.status,
+                    )
                     db.forget_equipment(equipment_id)
                 except Exception:
                     pass
@@ -253,15 +275,25 @@ class InMemoryStore:
                         timestamp=now,
                     )
                 )
+                try:
+                    db.record_event(
+                        equipment_id, eq.name, eq.ip, "down", category=eq.category,
+                        previous_status=previous_status, current_status=new_status,
+                        response_time_ms=response_time_ms, ts=now,
+                    )
+                except Exception:
+                    pass
 
             # Recuperacao: estava offline e virou online
             elif new_status == STATUS_ONLINE and previous_status == STATUS_OFFLINE:
                 eq.last_up_at = now
+                downtime_seconds = None
                 # encontra o ultimo evento de queda ainda aberto (sem up_at)
                 for event in reversed(self.events):
                     if event.equipment_id == equipment_id and event.up_at is None:
                         event.up_at = now
                         event.duration_seconds = (now - event.down_at).total_seconds()
+                        downtime_seconds = event.duration_seconds
                         break
                 self.events.append(
                     Event(
@@ -274,6 +306,15 @@ class InMemoryStore:
                         timestamp=now,
                     )
                 )
+                try:
+                    db.record_event(
+                        equipment_id, eq.name, eq.ip, "up", category=eq.category,
+                        previous_status=previous_status, current_status=new_status,
+                        response_time_ms=response_time_ms,
+                        duration_seconds=downtime_seconds, ts=now,
+                    )
+                except Exception:
+                    pass
 
             eq.status = new_status
 

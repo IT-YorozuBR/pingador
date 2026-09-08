@@ -15,6 +15,13 @@ cadastro -> ping automatico -> dashboard -> historico de quedas.
   linha do tempo de eventos).
 - Historico de eventos de queda/recuperacao, com horario, duracao da queda
   e tempo de resposta do ping.
+- **Linha do tempo de eventos** em pagina dedicada (`/timeline`): quedas,
+  recuperacoes e cadastros/remocoes distribuidos numa faixa horizontal que
+  se arrasta para frente/tras no tempo (mouse, scroll, Ctrl+scroll para
+  zoom, setas do teclado). Filtros por tipo de evento, base/categoria,
+  busca por nome/IP e janela de tempo (1h a 30 dias ou tudo). Barras de
+  indisponibilidade ligam cada queda a sua recuperacao, com animacoes.
+  Os eventos ficam persistidos em SQLite (`GET /api/timeline`).
 - Persistencia em **SQLite** (`db.py`) do historico de todas as verificacoes:
   registra a ultima vez que cada equipamento respondeu com sucesso (sobrevive
   a reinicializacao) e alimenta os graficos de disponibilidade por equipamento
@@ -111,10 +118,13 @@ pingador/
 ├── Inventario IP.xlsx      # planilha de inventario (uma aba por base/categoria)
 ├── requirements.txt
 ├── templates/
-│   └── index.html         # dashboard + lista + modal de cadastro
+│   ├── index.html         # dashboard + lista + modal de cadastro
+│   └── timeline.html        # pagina dedicada da linha do tempo de eventos
 ├── static/
 │   ├── css/style.css
-│   └── js/dashboard.js       # polling + renderizacao + Chart.js
+│   ├── css/timeline.css
+│   ├── js/dashboard.js       # polling + renderizacao + Chart.js
+│   └── js/timeline.js        # linha do tempo: arrasto, zoom, filtros, animacoes
 └── README.md
 ```
 

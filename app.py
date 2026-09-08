@@ -26,6 +26,11 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/timeline")
+def timeline_page():
+    return render_template("timeline.html")
+
+
 # ---------------- API: equipamentos ----------------
 
 @app.route("/api/equipments", methods=["GET"])
@@ -159,6 +164,44 @@ def availability_series():
     window = request.args.get("window", default="24h")
     bucket = request.args.get("bucket")  # "hour" | "day" | None (auto)
     return jsonify(db.get_availability_series(equipment_id, window, bucket))
+
+
+# ---------------- API: linha do tempo de eventos ----------------
+
+@app.route("/api/timeline", methods=["GET"])
+def api_timeline():
+    """
+    Eventos (quedas / recuperacoes / cadastros / remocoes) persistidos em
+    SQLite, para a pagina dedicada de linha do tempo.
+
+    Filtros (querystring, todos opcionais):
+      - since / until : ISO datetime (limites da janela)
+      - kinds         : lista separada por virgula (down,up,created,removed)
+      - equipment_id  : int
+      - category      : base/categoria
+      - search        : casa com nome do equipamento ou IP
+      - limit         : maximo de eventos (padrao 3000)
+      - order         : asc (padrao) | desc
+    """
+    kinds_raw = request.args.get("kinds")
+    kinds = [k.strip() for k in kinds_raw.split(",") if k.strip()] if kinds_raw else None
+    events = db.query_events(
+        since=request.args.get("since"),
+        until=request.args.get("until"),
+        kinds=kinds,
+        equipment_id=request.args.get("equipment_id", type=int),
+        category=request.args.get("category"),
+        search=request.args.get("search"),
+        limit=request.args.get("limit", default=3000, type=int),
+        order=request.args.get("order", default="asc"),
+    )
+    return jsonify(events)
+
+
+@app.route("/api/timeline/bounds", methods=["GET"])
+def api_timeline_bounds():
+    """Extremos + contagem por tipo, usados para calibrar o zoom inicial."""
+    return jsonify(db.events_bounds())
 
 
 # ---------------- API: dashboard ----------------
