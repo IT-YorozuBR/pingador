@@ -26,6 +26,22 @@
             </div>
         </div>
         <div class="tl-topbar-right">
+            <div class="tl-bell-wrap">
+                <button class="tl-bell" id="tl-bell" type="button" aria-label="Notifica&ccedil;&otilde;es" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                    <span class="tl-bell-badge" id="tl-bell-badge" hidden>0</span>
+                </button>
+                <div class="tl-bell-panel" id="tl-bell-panel" hidden>
+                    <div class="tl-bell-head">
+                        <span>NOTIFICA&Ccedil;&Otilde;ES</span>
+                        <button id="tl-bell-clear" type="button">limpar</button>
+                    </div>
+                    <div class="tl-bell-list" id="tl-bell-list"></div>
+                </div>
+            </div>
             <span class="tl-clock" id="tl-clock">--:--:--</span>
         </div>
     </header>

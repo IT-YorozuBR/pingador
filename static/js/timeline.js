@@ -55,6 +55,15 @@ const pop = document.getElementById("tl-pop");
 const emptyEl = document.getElementById("tl-empty");
 const focusSvg = document.getElementById("tl-focus");
 const focusLabel = document.getElementById("tl-focus-label");
+const bellBtn = document.getElementById("tl-bell");
+const bellBadge = document.getElementById("tl-bell-badge");
+const bellPanel = document.getElementById("tl-bell-panel");
+const bellList = document.getElementById("tl-bell-list");
+
+const knownEventIds = new Set(); // ids ja vistos -> nao notifica de novo
+let notifSeeded = false;         // 1a carga so semeia, nao gera notificacao
+let notifItems = [];             // { ev, read } mais recente primeiro (cap 50)
+let unreadCount = 0;
 
 const AXIS_H = 34; // deve casar com --tl-axis-h no CSS
 let focusEv = null; // evento (down/up) com a "linha da queda" em foco no hover
@@ -883,7 +892,8 @@ document.addEventListener("keydown", (e) => {
     } else if (e.key === "Home") {
         goToNow(true);
     } else if (e.key === "Escape") {
-        if (!sidePanel.hidden) closeEquipmentDetail();
+        if (!bellPanel.hidden) closeBell();
+        else if (!sidePanel.hidden) closeEquipmentDetail();
         else unpin();
     }
 });
@@ -1029,15 +1039,22 @@ async function loadEvents(keepView) {
     }
     if (state.category) params.set("category", state.category);
     if (state.search) params.set("search", state.search);
-    params.set("limit", "8000");
+    // pega os mais RECENTES (nao os mais antigos) ao bater no limite: garante
+    // que, se uma queda esta carregada, a recuperacao dela (mais nova) tambem
+    // esta -> evita marcar como "ainda offline" algo que ja voltou
+    params.set("order", "desc");
+    params.set("limit", "10000");
 
     try {
         const list = await fetch("/api/timeline?" + params.toString()).then((r) => r.json());
         state.events = list
             .map((e) => ({ ...e, ms: parseTs(e.ts) }))
-            .sort((a, b) => a.ms - b.ms);
+            // ordena cronologicamente; `id` (autoincrement) desempata quando
+            // dois eventos caem no mesmo milissegundo, garantindo down antes de up
+            .sort((a, b) => a.ms - b.ms || a.id - b.id);
         computeEventLinks();
         if (focusEv) focusEv = state.events.find((e) => e.id === focusEv.id) || null;
+        notifyNewEvents(!!keepView);
         updateFooter();
         if (!keepView) {
             applyInitialView();
@@ -1050,6 +1067,100 @@ async function loadEvents(keepView) {
         console.error("events:", err);
     }
 }
+
+// ------------------------- notificacoes (sino) -------------------------
+
+function notifyNewEvents(fromPoll) {
+    const fresh = [];
+    for (const ev of state.events) {
+        if (knownEventIds.has(ev.id)) continue;
+        knownEventIds.add(ev.id);
+        if (notifSeeded && fromPoll) fresh.push(ev);
+    }
+    notifSeeded = true;
+    if (!fresh.length) return;
+    fresh.sort((a, b) => b.ms - a.ms); // mais recente primeiro
+    for (const ev of fresh) notifItems.unshift({ ev, read: false });
+    notifItems = notifItems.slice(0, 50);
+    unreadCount = Math.min(99, unreadCount + fresh.length);
+    renderBell();
+}
+
+function notifExtra(ev) {
+    if (ev.kind === "up" && ev.duration_seconds != null) {
+        return " · ficou fora " + fmtDuration(ev.duration_seconds);
+    }
+    if (ev.kind === "down" && ev._unrecovered) return " · ainda offline";
+    return "";
+}
+
+function renderBell() {
+    const hasUnread = unreadCount > 0;
+    bellBtn.classList.toggle("has-unread", hasUnread);
+    bellBadge.hidden = !hasUnread;
+    bellBadge.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+
+    if (!notifItems.length) {
+        bellList.innerHTML = `<div class="tl-bell-empty">Nenhuma movimentacao ainda.</div>`;
+        return;
+    }
+    bellList.innerHTML = notifItems
+        .map((it, idx) => {
+            const ev = it.ev;
+            const name = ev.equipment_name || "Equipamento #" + ev.equipment_id;
+            return (
+                `<div class="tl-bell-item k-${ev.kind}${it.read ? "" : " unread"}" data-idx="${idx}">` +
+                `<span class="tl-bell-dot"></span>` +
+                `<div class="tl-bell-body">` +
+                `<b>${KIND_LABEL[ev.kind]}</b>` +
+                `<span class="tl-bell-name">${escapeHtml(name)}</span>` +
+                `<span class="tl-bell-sub">${fmtDateTime(ev.ms)}${notifExtra(ev)}</span>` +
+                `</div></div>`
+            );
+        })
+        .join("");
+}
+
+function openBell() {
+    bellPanel.hidden = false;
+    bellBtn.setAttribute("aria-expanded", "true");
+    notifItems.forEach((it) => (it.read = true));
+    unreadCount = 0;
+    renderBell();
+}
+
+function closeBell() {
+    bellPanel.hidden = true;
+    bellBtn.setAttribute("aria-expanded", "false");
+}
+
+bellBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (bellPanel.hidden) openBell();
+    else closeBell();
+});
+
+document.getElementById("tl-bell-clear").addEventListener("click", (e) => {
+    e.stopPropagation();
+    notifItems = [];
+    unreadCount = 0;
+    renderBell();
+});
+
+bellList.addEventListener("click", (e) => {
+    const item = e.target.closest(".tl-bell-item");
+    if (!item) return;
+    const it = notifItems[+item.dataset.idx];
+    if (!it) return;
+    closeBell();
+    openEquipmentDetail(it.ev);
+});
+
+document.addEventListener("click", (e) => {
+    if (!bellPanel.hidden && !e.target.closest(".tl-bell-wrap")) closeBell();
+});
+
+renderBell();
 
 function updateFooter() {
     const n = state.unrecoveredCount || 0;
