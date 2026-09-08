@@ -40,16 +40,24 @@ const state = {
     dragging: false,
     boundsFirstMs: null,
     boundsLastMs: null,
+    focusEquipmentId: null,   // equipamento em foco na linha do tempo
+    focusEquipmentName: "",
 };
 
 const stage = document.getElementById("tl-stage");
 const nodesLayer = document.getElementById("tl-nodes");
+const trackLayer = document.getElementById("tl-equip-track");
 const outagesLayer = document.getElementById("tl-outages");
 const gridLayer = document.getElementById("tl-grid");
 const axisLayer = document.getElementById("tl-axis");
 const nowLine = document.getElementById("tl-nowline");
 const pop = document.getElementById("tl-pop");
 const emptyEl = document.getElementById("tl-empty");
+const focusSvg = document.getElementById("tl-focus");
+const focusLabel = document.getElementById("tl-focus-label");
+
+const AXIS_H = 34; // deve casar com --tl-axis-h no CSS
+let focusEv = null; // evento (down/up) com a "linha da queda" em foco no hover
 
 const nodeEls = new Map();     // event.id -> element
 const outageEls = new Map();   // "o"+event.id -> element
@@ -133,12 +141,14 @@ function layout() {
     const margin = 80;
     const visibleIds = new Set();
     let visibleCount = 0;
+    const fid = state.focusEquipmentId;
+    stage.classList.toggle("equip-focusing", fid != null);
 
     for (const ev of state.events) {
         if (!state.kinds.has(ev.kind)) continue;
         const x = xOf(ev.ms);
         if (x < -margin || x > w + margin) continue;
-        visibleCount++;
+        if (fid == null || ev.equipment_id === fid) visibleCount++;
         visibleIds.add(ev.id);
 
         let el = nodeEls.get(ev.id);
@@ -154,6 +164,9 @@ function layout() {
             }
         }
         el.style.left = x + "px";
+        el.classList.toggle("unrecovered", !!ev._unrecovered);
+        el.classList.toggle("equip-dim", fid != null && ev.equipment_id !== fid);
+        el.classList.toggle("equip-hi", fid != null && ev.equipment_id === fid);
     }
 
     for (const [id, el] of nodeEls) {
@@ -166,18 +179,51 @@ function layout() {
     layoutOutages(w, margin);
     layoutGridAndAxis(w);
     updateNowLine(w);
+    drawEquipTrack(w, margin);
+    if (focusEv) showFocus(focusEv, false); // mantem a "linha da queda" alinhada ao dar pan/zoom
 
-    const noneVisible = visibleCount === 0;
-    emptyEl.hidden = !noneVisible;
+    emptyEl.hidden = visibleCount !== 0 ? true : false;
+}
+
+// desenha a "trilha" do equipamento em foco: liga em ordem cronologica
+// todas as movimentacoes dele (queda / recuperacao / cadastro / remocao)
+function drawEquipTrack(w, margin) {
+    const fid = state.focusEquipmentId;
+    if (fid == null) {
+        if (trackLayer.innerHTML) trackLayer.innerHTML = "";
+        return;
+    }
+    const laneFrac = [0.24, 0.56, 0.85];
+    const h = stage.clientHeight - AXIS_H;
+    const pts = [];
+    for (const ev of state.events) {
+        if (ev.equipment_id !== fid || !state.kinds.has(ev.kind)) continue;
+        const x = xOf(ev.ms);
+        if (x < -margin * 4 || x > w + margin * 4) continue;
+        pts.push([x, (stage.clientHeight - AXIS_H) * laneFrac[LANE_OF[ev.kind]]]);
+    }
+    if (pts.length < 1) {
+        trackLayer.innerHTML = "";
+        return;
+    }
+    trackLayer.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    const line =
+        pts.length > 1
+            ? `<polyline points="${pts.map((p) => p.join(",")).join(" ")}"/>`
+            : "";
+    const dots = pts.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="3"/>`).join("");
+    trackLayer.innerHTML = line + dots;
 }
 
 function layoutOutages(w, margin) {
     const keep = new Set();
     const showOutages = state.kinds.has("down") || state.kinds.has("up");
+    const fid = state.focusEquipmentId;
 
     if (showOutages) {
         for (const ev of state.events) {
             if (ev.kind !== "up" || ev.duration_seconds == null) continue;
+            if (fid != null && ev.equipment_id !== fid) continue; // foco: some com o resto
             const downMs = ev.ms - ev.duration_seconds * 1000;
             const x1 = xOf(downMs);
             const x2 = xOf(ev.ms);
@@ -202,6 +248,49 @@ function layoutOutages(w, margin) {
             outageEls.delete(key);
         }
     }
+}
+
+// liga cada queda a sua recuperacao (_mate / _recoveredAt / _downAt) e
+// marca as quedas que nunca voltaram (_unrecovered)
+function computeEventLinks() {
+    const byEq = new Map();
+    for (const ev of state.events) {
+        ev._unrecovered = false;
+        ev._recoveredAt = null;
+        ev._downAt = null;
+        ev._mate = null;
+        if (ev.equipment_id == null) continue;
+        if (!byEq.has(ev.equipment_id)) byEq.set(ev.equipment_id, []);
+        byEq.get(ev.equipment_id).push(ev);
+    }
+    let count = 0;
+    for (const list of byEq.values()) {
+        let openDown = null;
+        let lastRelevant = null;
+        for (const ev of list) {
+            if (ev.kind === "down") {
+                openDown = ev;
+                lastRelevant = ev;
+            } else if (ev.kind === "up") {
+                lastRelevant = ev;
+                if (openDown) {
+                    openDown._recoveredAt = ev.ms;
+                    openDown._mate = ev;
+                    ev._downAt = openDown.ms;
+                    ev._mate = openDown;
+                    openDown = null;
+                }
+            } else if (ev.kind === "removed") {
+                lastRelevant = ev;
+                openDown = null;
+            }
+        }
+        if (lastRelevant && lastRelevant.kind === "down") {
+            lastRelevant._unrecovered = true;
+            count++;
+        }
+    }
+    state.unrecoveredCount = count;
 }
 
 function niceInterval() {
@@ -246,6 +335,144 @@ function updateNowLine(w) {
     }
 }
 
+// ------------------------- "linha da queda" em foco (hover) -------------------------
+
+function laneY(frac) {
+    return (stage.clientHeight - AXIS_H) * frac;
+}
+
+function showFocus(ev, animate = true) {
+    let downMs;
+    let upMs;
+    let ongoing = false;
+
+    if (ev.kind === "down") {
+        downMs = ev.ms;
+        if (ev._recoveredAt != null) {
+            upMs = ev._recoveredAt;
+        } else {
+            upMs = Date.now();
+            ongoing = true;
+        }
+    } else if (ev.kind === "up" && ev._downAt != null) {
+        downMs = ev._downAt;
+        upMs = ev.ms;
+    } else {
+        return;
+    }
+
+    focusEv = ev;
+    const x0 = xOf(downMs);
+    const x1 = xOf(upMs);
+    const hoveredX = xOf(ev.ms);
+    const y0 = laneY(0.24);
+    const y1 = laneY(0.56);
+    const ymid = laneY(0.42);
+    const w = stage.clientWidth;
+    const h = stage.clientHeight - AXIS_H;
+
+    focusSvg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    focusSvg.innerHTML =
+        `<line class="tl-focus-guide" x1="${hoveredX}" y1="0" x2="${hoveredX}" y2="${h}"/>` +
+        `<path class="tl-focus-path${ongoing ? " ongoing" : ""}" ` +
+        `d="M ${x0} ${y0} V ${ymid} H ${x1} V ${y1}"/>`;
+
+    const path = focusSvg.querySelector(".tl-focus-path");
+    if (!ongoing) {
+        // linha continua com animacao de "desenho"; se estiver so realinhando
+        // (pan/zoom), mostra ja completa
+        const len = path.getTotalLength();
+        path.style.strokeDasharray = len;
+        path.style.transition = "none";
+        path.style.strokeDashoffset = animate ? len : "0";
+        if (animate) {
+            requestAnimationFrame(() => {
+                path.style.transition = "stroke-dashoffset 0.35s ease";
+                path.style.strokeDashoffset = "0";
+            });
+        }
+    }
+    // ongoing: sem estilos inline -> usa o tracejado animado do CSS
+
+    const secs = (upMs - downMs) / 1000;
+    focusLabel.textContent = ongoing
+        ? `offline ha ${fmtDuration(secs)} (ainda)`
+        : `ficou fora ${fmtDuration(secs)}`;
+    focusLabel.classList.toggle("ongoing", ongoing);
+    focusLabel.style.left = (x0 + x1) / 2 + "px";
+    focusLabel.style.top = ymid + "px";
+    focusLabel.hidden = false;
+
+    stage.classList.add("focusing");
+    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi"));
+    const self = nodeEls.get(ev.id);
+    if (self) self.classList.add("hi");
+    if (ev._mate) {
+        const mate = nodeEls.get(ev._mate.id);
+        if (mate) mate.classList.add("mate-hi");
+    }
+}
+
+function hideFocus() {
+    focusEv = null;
+    focusSvg.innerHTML = "";
+    focusLabel.hidden = true;
+    stage.classList.remove("focusing");
+    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi"));
+}
+
+// ------------------------- foco num equipamento na linha do tempo -------------------------
+
+const equipChip = document.getElementById("tl-equip-focus");
+const equipChipName = document.getElementById("tl-equip-focus-name");
+
+function focusEquipmentOnTimeline(id, name) {
+    if (id == null) return;
+    state.focusEquipmentId = id;
+    state.focusEquipmentName = name || "Equipamento #" + id;
+    equipChipName.textContent = state.focusEquipmentName;
+    equipChip.hidden = false;
+    fitToEquipment();
+    scheduleLayout();
+}
+
+function fitToEquipment() {
+    const fid = state.focusEquipmentId;
+    if (fid == null) return;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const ev of state.events) {
+        if (ev.equipment_id !== fid) continue;
+        if (ev.ms < lo) lo = ev.ms;
+        if (ev.ms > hi) hi = ev.ms;
+    }
+    if (!isFinite(lo)) return;
+    let span = hi - lo;
+    if (span < 10 * 60e3) {
+        const c = (lo + hi) / 2;
+        lo = c - 30 * 60e3;
+        hi = c + 30 * 60e3;
+        span = hi - lo;
+    }
+    const pad = span * 0.12;
+    setFollow(false);
+    fitRange(lo - pad, hi + pad);
+}
+
+function clearEquipmentFocus() {
+    state.focusEquipmentId = null;
+    state.focusEquipmentName = "";
+    equipChip.hidden = true;
+    scheduleLayout();
+}
+
+if (equipChip) {
+    document.getElementById("tl-equip-focus-clear").addEventListener("click", () => {
+        if (sidePanel && !sidePanel.hidden) closeEquipmentDetail();
+        else clearEquipmentFocus();
+    });
+}
+
 // ------------------------- nodes + popover -------------------------
 
 function buildNode(ev) {
@@ -253,10 +480,18 @@ function buildNode(ev) {
     el.type = "button";
     el.className = `tl-node k-${ev.kind} lane-${LANE_OF[ev.kind]}`;
     el.innerHTML = `<span class="tl-node-ring"></span><span class="tl-node-core"></span>`;
-    el.addEventListener("mouseenter", () => showPop(ev, el));
-    el.addEventListener("mouseleave", scheduleHidePop);
-    el.addEventListener("focus", () => showPop(ev, el));
-    el.addEventListener("blur", scheduleHidePop);
+    const enter = () => {
+        showPop(ev, el);
+        if (ev.kind === "down" || ev.kind === "up") showFocus(ev);
+    };
+    const leave = () => {
+        scheduleHidePop();
+        hideFocus();
+    };
+    el.addEventListener("mouseenter", enter);
+    el.addEventListener("mouseleave", leave);
+    el.addEventListener("focus", enter);
+    el.addEventListener("blur", leave);
     el.addEventListener("click", (e) => {
         e.stopPropagation();
         openEquipmentDetail(ev, el);
@@ -287,7 +522,11 @@ function showPop(ev, el, pinned) {
         rows.push(`<div class="tl-pop-row">Queda durou <b>${fmtDuration(ev.duration_seconds)}</b></div>`);
     }
     if (ev.kind === "down") {
-        rows.push(`<div class="tl-pop-row">Ficou <b style="color:var(--tl-red)">OFFLINE</b></div>`);
+        rows.push(
+            ev._unrecovered
+                ? `<div class="tl-pop-row"><b style="color:var(--tl-red)">&#9888; AINDA OFFLINE</b> &bull; nao voltou</div>`
+                : `<div class="tl-pop-row">Ficou <b style="color:var(--tl-red)">OFFLINE</b></div>`
+        );
     }
     if (ev.kind === "up" && ev.response_time_ms != null) {
         rows.push(`<div class="tl-pop-row">Resposta ao voltar: <b>${ev.response_time_ms} ms</b></div>`);
@@ -335,14 +574,24 @@ function escapeHtml(str) {
         .replace(/"/g, "&quot;");
 }
 
-// ------------------------- modal de detalhes do equipamento -------------------------
+// ------------------------- aba lateral de detalhes do equipamento -------------------------
 
-const modalOverlay = document.getElementById("tl-modal-overlay");
+const sidePanel = document.getElementById("tl-side");
 const detail = {
     event: null,
     window: "24h",
     reqId: 0,
 };
+
+// o palco muda de largura ao abrir/fechar a aba -> recalcula o mapa
+function afterPanelToggle() {
+    requestAnimationFrame(() => {
+        state.pxPerMs = clamp(state.pxPerMs, minPxPerMs(), maxPxPerMs());
+        if (state.focusEquipmentId != null) fitToEquipment();
+        else if (!state.follow) clampView();
+        scheduleLayout();
+    });
+}
 
 function fmtIso(iso) {
     return iso ? fmtDateTime(parseTs(iso)) : "-";
@@ -352,6 +601,9 @@ function openEquipmentDetail(ev, el) {
     detail.event = ev;
     detail.window = "24h";
     unpin();
+    hideFocus();
+    // foca esse equipamento na linha do tempo (visivel ao fechar o modal)
+    focusEquipmentOnTimeline(ev.equipment_id, ev.equipment_name);
     if (el) {
         pinnedId = ev.id;
         el.classList.add("pinned");
@@ -361,9 +613,11 @@ function openEquipmentDetail(ev, el) {
     document.querySelectorAll("#tlm-windows button").forEach((b) =>
         b.classList.toggle("active", b.dataset.window === "24h")
     );
-    document.getElementById("tlm-kind").className = "tl-modal-kind k-" + ev.kind;
+    document.getElementById("tlm-kind").className =
+        "tl-modal-kind k-" + ev.kind + (ev._unrecovered ? " unrecovered" : "");
     document.getElementById("tlm-kind").textContent =
-        KIND_LABEL[ev.kind] + " em " + fmtDateTime(ev.ms);
+        KIND_LABEL[ev.kind] + " em " + fmtDateTime(ev.ms) +
+        (ev._unrecovered ? "  —  AINDA OFFLINE" : "");
     document.getElementById("tlm-name").textContent =
         ev.equipment_name || "Equipamento #" + ev.equipment_id;
     const eqInfo = equipmentById.get(ev.equipment_id);
@@ -378,14 +632,17 @@ function openEquipmentDetail(ev, el) {
     document.getElementById("tlm-events").innerHTML =
         `<div class="tl-modal-empty">Carregando eventos…</div>`;
 
-    modalOverlay.hidden = false;
+    sidePanel.hidden = false;
+    afterPanelToggle();
     loadEquipmentDetail();
     loadEquipmentEvents();
 }
 
 function closeEquipmentDetail() {
-    modalOverlay.hidden = true;
+    sidePanel.hidden = true;
     detail.event = null;
+    clearEquipmentFocus();
+    afterPanelToggle();
     unpin();
 }
 
@@ -490,9 +747,6 @@ async function loadEquipmentEvents() {
 }
 
 document.getElementById("tlm-close").addEventListener("click", closeEquipmentDetail);
-modalOverlay.addEventListener("click", (e) => {
-    if (e.target === modalOverlay) closeEquipmentDetail();
-});
 document.getElementById("tlm-windows").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -524,6 +778,7 @@ stage.addEventListener("pointerdown", (e) => {
     state.dragging = true;
     setFollow(false);
     unpin();
+    hideFocus();
     dragStartX = e.clientX;
     dragStartView = state.viewStartMs;
     stage.classList.add("grabbing");
@@ -534,8 +789,26 @@ stage.addEventListener("pointermove", (e) => {
     if (!state.dragging) return;
     const dx = e.clientX - dragStartX;
     state.viewStartMs = dragStartView - dx / state.pxPerMs;
+    clampView();
     scheduleLayout();
 });
+
+// impede arrastar/rolar para bem longe do conteudo (ficar olhando o vazio)
+function clampView() {
+    const w = stage.clientWidth;
+    const spanMs = w / state.pxPerMs;
+    let lo = state.boundsFirstMs;
+    let hi = Math.max(Date.now(), state.boundsLastMs || 0);
+    if (lo == null) lo = Date.now() - RANGE_MS["24h"];
+    const padMs = spanMs * 0.2;
+    const minStart = lo - padMs;
+    const maxStart = hi + padMs - spanMs;
+    if (minStart <= maxStart) {
+        state.viewStartMs = clamp(state.viewStartMs, minStart, maxStart);
+    } else {
+        state.viewStartMs = (lo + hi) / 2 - spanMs / 2; // cabe tudo: centraliza
+    }
+}
 
 function endDrag(e) {
     if (!state.dragging) return;
@@ -555,9 +828,12 @@ stage.addEventListener(
         if (e.ctrlKey || e.metaKey) {
             zoomAt(e.clientX, Math.pow(0.88, e.deltaY > 0 ? 1 : -1));
         } else {
-            const amount = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-            state.viewStartMs += (amount * 1.1) / state.pxPerMs;
+            // normaliza deltaMode (linha/pagina -> pixels) e nao amplifica
+            const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? stage.clientHeight : 1;
+            const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+            state.viewStartMs += (raw * unit) / state.pxPerMs;
             setFollow(false);
+            clampView();
         }
         scheduleLayout();
     },
@@ -570,6 +846,7 @@ function zoomAt(clientX, factor) {
     const tUnder = state.viewStartMs + px / state.pxPerMs;
     state.pxPerMs = clamp(state.pxPerMs * factor, minPxPerMs(), maxPxPerMs());
     state.viewStartMs = tUnder - px / state.pxPerMs;
+    clampView();
 }
 
 document.getElementById("tl-zoom-in").addEventListener("click", () => {
@@ -590,10 +867,12 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowLeft") {
         state.viewStartMs -= (stage.clientWidth * 0.15) / state.pxPerMs;
         setFollow(false);
+        clampView();
         scheduleLayout();
     } else if (e.key === "ArrowRight") {
         state.viewStartMs += (stage.clientWidth * 0.15) / state.pxPerMs;
         setFollow(false);
+        clampView();
         scheduleLayout();
     } else if (e.key === "+" || e.key === "=") {
         zoomAt(stage.getBoundingClientRect().left + stage.clientWidth / 2, 1 / 0.7);
@@ -604,7 +883,7 @@ document.addEventListener("keydown", (e) => {
     } else if (e.key === "Home") {
         goToNow(true);
     } else if (e.key === "Escape") {
-        if (!modalOverlay.hidden) closeEquipmentDetail();
+        if (!sidePanel.hidden) closeEquipmentDetail();
         else unpin();
     }
 });
@@ -757,8 +1036,15 @@ async function loadEvents(keepView) {
         state.events = list
             .map((e) => ({ ...e, ms: parseTs(e.ts) }))
             .sort((a, b) => a.ms - b.ms);
+        computeEventLinks();
+        if (focusEv) focusEv = state.events.find((e) => e.id === focusEv.id) || null;
         updateFooter();
-        if (!keepView) applyInitialView();
+        if (!keepView) {
+            applyInitialView();
+            if (state.focusEquipmentId != null) fitToEquipment();
+        } else if (!state.follow) {
+            clampView();
+        }
         scheduleLayout();
     } catch (err) {
         console.error("events:", err);
@@ -766,7 +1052,10 @@ async function loadEvents(keepView) {
 }
 
 function updateFooter() {
-    document.getElementById("tl-foot-count").textContent = `${state.events.length} eventos`;
+    const n = state.unrecoveredCount || 0;
+    document.getElementById("tl-foot-count").innerHTML =
+        `${state.events.length} eventos` +
+        (n ? ` <span class="tl-foot-alert">&#9888; ${n} sem retorno</span>` : "");
     if (state.events.length) {
         const a = state.events[0].ms;
         const b = state.events[state.events.length - 1].ms;

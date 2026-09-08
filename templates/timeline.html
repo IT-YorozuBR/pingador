@@ -69,6 +69,7 @@
         </div>
     </section>
 
+    <div class="tl-workarea">
     <main class="tl-stage" id="tl-stage">
         <div class="tl-vignette"></div>
         <div class="tl-scan" id="tl-scan"></div>
@@ -81,47 +82,54 @@
         </div>
 
         <div class="tl-outages" id="tl-outages"></div>
+        <svg class="tl-equip-track" id="tl-equip-track" aria-hidden="true" preserveAspectRatio="none"></svg>
+        <svg class="tl-focus" id="tl-focus" aria-hidden="true" preserveAspectRatio="none"></svg>
         <div class="tl-nodes" id="tl-nodes"></div>
+        <div class="tl-focus-label" id="tl-focus-label" hidden></div>
 
         <div class="tl-nowline" id="tl-nowline"><span>AGORA</span></div>
         <div class="tl-axis" id="tl-axis"></div>
 
+        <div class="tl-equip-focus" id="tl-equip-focus" hidden>
+            <span>Focado em <b id="tl-equip-focus-name"></b></span>
+            <button id="tl-equip-focus-clear" type="button">&#10005; limpar</button>
+        </div>
+
         <div class="tl-empty" id="tl-empty" hidden>Nenhum evento no periodo / filtro selecionado.</div>
-        <div class="tl-hint">arraste &#8596; &bull; scroll desloca &bull; Ctrl+scroll d&aacute; zoom &bull; clique num evento para fixar</div>
+        <div class="tl-hint">arraste &#8596; &bull; scroll desloca &bull; Ctrl+scroll d&aacute; zoom &bull; clique num evento para detalhes</div>
     </main>
 
-    <div class="tl-pop" id="tl-pop" hidden></div>
-
-    <div class="tl-modal-overlay" id="tl-modal-overlay" hidden>
-        <div class="tl-modal" id="tl-modal" role="dialog" aria-modal="true">
-            <div class="tl-modal-head">
-                <div class="tl-modal-titles">
-                    <span class="tl-modal-kind" id="tlm-kind"></span>
-                    <h2 id="tlm-name">&mdash;</h2>
-                    <p id="tlm-sub">&mdash;</p>
-                </div>
-                <button class="tl-modal-close" id="tlm-close" type="button">FECHAR</button>
+    <aside class="tl-side" id="tl-side" role="complementary" hidden>
+        <div class="tl-modal-head">
+            <div class="tl-modal-titles">
+                <span class="tl-modal-kind" id="tlm-kind"></span>
+                <h2 id="tlm-name">&mdash;</h2>
+                <p id="tlm-sub">&mdash;</p>
             </div>
-
-            <div class="tl-modal-windows" id="tlm-windows" role="group" aria-label="Janela de tempo">
-                <button data-window="24h" class="active" type="button">24h</button>
-                <button data-window="7d" type="button">7d</button>
-                <button data-window="30d" type="button">30d</button>
-                <button data-window="all" type="button">TUDO</button>
-            </div>
-
-            <div class="tl-modal-stats" id="tlm-stats"></div>
-
-            <div class="tl-modal-events">
-                <h3>Eventos deste equipamento</h3>
-                <div class="tl-modal-eventlist" id="tlm-events"></div>
-            </div>
-
-            <div class="tl-modal-actions">
-                <button id="tlm-isolate" type="button" class="tl-now-btn">&#9673; ISOLAR NA LINHA DO TEMPO</button>
-            </div>
+            <button class="tl-modal-close" id="tlm-close" type="button" aria-label="Fechar">&#10005;</button>
         </div>
+
+        <div class="tl-modal-windows" id="tlm-windows" role="group" aria-label="Janela de tempo">
+            <button data-window="24h" class="active" type="button">24h</button>
+            <button data-window="7d" type="button">7d</button>
+            <button data-window="30d" type="button">30d</button>
+            <button data-window="all" type="button">TUDO</button>
+        </div>
+
+        <div class="tl-modal-stats" id="tlm-stats"></div>
+
+        <div class="tl-modal-events">
+            <h3>Eventos deste equipamento</h3>
+            <div class="tl-modal-eventlist" id="tlm-events"></div>
+        </div>
+
+        <div class="tl-modal-actions">
+            <button id="tlm-isolate" type="button" class="tl-now-btn">&#9673; ISOLAR NA LINHA DO TEMPO</button>
+        </div>
+    </aside>
     </div>
+
+    <div class="tl-pop" id="tl-pop" hidden></div>
 
     <footer class="tl-foot">
         <span id="tl-foot-count">0 eventos</span>
