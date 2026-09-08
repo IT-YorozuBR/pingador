@@ -499,6 +499,7 @@ select.tl-input { cursor: pointer; }
 .tl-pop-name { font-size: 0.95rem; font-weight: 600; margin: 3px 0 2px; }
 .tl-pop-row { font-size: 0.74rem; color: var(--text-muted); margin-top: 3px; }
 .tl-pop-row b { color: var(--text); font-weight: 600; }
+.tl-pop-desc { color: var(--text); font-style: italic; opacity: 0.9; margin-top: 4px; }
 
 /* -------------------- Modal de detalhes do equipamento -------------------- */
 
@@ -557,7 +558,10 @@ select.tl-input { cursor: pointer; }
     margin: 0;
     font-size: 0.74rem;
     color: var(--text-muted);
+    line-height: 1.5;
 }
+
+.tlm-sub-desc { font-style: italic; color: var(--text); opacity: 0.85; }
 
 .tl-modal-close {
     font-family: inherit;

@@ -54,6 +54,7 @@ const emptyEl = document.getElementById("tl-empty");
 const nodeEls = new Map();     // event.id -> element
 const outageEls = new Map();   // "o"+event.id -> element
 const everShown = new Set();
+let equipmentById = new Map(); // equipment_id -> objeto de /api/equipments (p/ descricao etc.)
 
 let layoutQueued = false;
 let pinnedId = null;
@@ -277,6 +278,9 @@ function showPop(ev, el, pinned) {
     if (pinnedId && !pinned && pinnedId !== ev.id) return;
 
     const rows = [];
+    const eqInfo = equipmentById.get(ev.equipment_id);
+    const desc = eqInfo && eqInfo.description;
+    if (desc) rows.push(`<div class="tl-pop-row tl-pop-desc">${escapeHtml(desc)}</div>`);
     rows.push(`<div class="tl-pop-row"><b>${escapeHtml(ev.ip || "-")}</b>${ev.category ? " &bull; " + escapeHtml(ev.category) : ""}</div>`);
     rows.push(`<div class="tl-pop-row">${fmtDateTime(ev.ms)}</div>`);
     if (ev.kind === "up" && ev.duration_seconds != null) {
@@ -362,8 +366,13 @@ function openEquipmentDetail(ev, el) {
         KIND_LABEL[ev.kind] + " em " + fmtDateTime(ev.ms);
     document.getElementById("tlm-name").textContent =
         ev.equipment_name || "Equipamento #" + ev.equipment_id;
-    document.getElementById("tlm-sub").textContent =
-        [ev.ip, ev.category].filter(Boolean).join("  •  ") || "-";
+    const eqInfo = equipmentById.get(ev.equipment_id);
+    const subParts = [ev.ip, ev.category].filter(Boolean).join("  •  ") || "-";
+    document.getElementById("tlm-sub").innerHTML =
+        escapeHtml(subParts) +
+        (eqInfo && eqInfo.description
+            ? `<br><span class="tlm-sub-desc">${escapeHtml(eqInfo.description)}</span>`
+            : "");
     document.getElementById("tlm-stats").innerHTML =
         `<div class="tl-modal-empty">Carregando disponibilidade…</div>`;
     document.getElementById("tlm-events").innerHTML =
@@ -711,6 +720,15 @@ async function loadBounds() {
     }
 }
 
+async function loadEquipmentIndex() {
+    try {
+        const list = await fetch("/api/equipments").then((r) => r.json());
+        equipmentById = new Map(list.map((e) => [e.id, e]));
+    } catch (err) {
+        console.error("equipments index:", err);
+    }
+}
+
 async function loadCategories() {
     try {
         const cats = await fetch("/api/categories").then((r) => r.json());
@@ -812,13 +830,13 @@ window.addEventListener("resize", () => {
     tickClock();
     setInterval(tickClock, 1000);
 
-    await Promise.all([loadBounds(), loadCategories()]);
+    await Promise.all([loadBounds(), loadCategories(), loadEquipmentIndex()]);
     await loadEvents(false);
 
     requestAnimationFrame(frameLoop);
 
     setInterval(async () => {
-        await loadBounds();
+        await Promise.all([loadBounds(), loadEquipmentIndex()]);
         await loadEvents(true);
     }, POLL_MS);
 })();
