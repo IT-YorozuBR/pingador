@@ -65,9 +65,16 @@ function initEquipmentLayoutMode() {
     document.getElementById("btn-layout-list").addEventListener("click", () => applyEquipmentLayoutMode("list"));
 }
 
+let detailEquipmentId = null;
+let availabilityWindow = "24h";
+let availabilityChart = null;
+
 function openEquipmentDetails(id) {
     const equipment = latestEquipments.find((eq) => eq.id === id);
     if (!equipment) return;
+
+    detailEquipmentId = id;
+    loadAvailability();
 
     const history = latestHistoryByEquipment[id] || [];
     document.getElementById("detail-name").textContent = equipment.name;
@@ -107,6 +114,11 @@ function openEquipmentDetails(id) {
 
 function closeEquipmentDetails() {
     document.getElementById("detail-modal-overlay").classList.add("hidden");
+    detailEquipmentId = null;
+    if (availabilityChart) {
+        availabilityChart.destroy();
+        availabilityChart = null;
+    }
 }
 
 function initDetailModal() {
@@ -115,6 +127,138 @@ function initDetailModal() {
     overlay.addEventListener("click", (evt) => {
         if (evt.target === overlay) closeEquipmentDetails();
     });
+
+    document.querySelectorAll(".window-switch button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            availabilityWindow = btn.dataset.window;
+            document.querySelectorAll(".window-switch button").forEach((b) =>
+                b.classList.toggle("active", b === btn)
+            );
+            loadAvailability();
+        });
+    });
+}
+
+// ---------------- Disponibilidade (SQLite) ----------------
+
+async function loadAvailability() {
+    const id = detailEquipmentId;
+    if (id === null) return;
+    const win = availabilityWindow;
+
+    try {
+        const [summaryRes, seriesRes] = await Promise.all([
+            fetch(`/api/availability?equipment_id=${id}&window=${win}`),
+            fetch(`/api/availability/series?equipment_id=${id}&window=${win}`),
+        ]);
+        const summary = await summaryRes.json();
+        const series = await seriesRes.json();
+        if (detailEquipmentId !== id || availabilityWindow !== win) return; // trocou no meio
+
+        renderAvailabilitySummary(summary);
+        renderAvailabilityChart(series);
+    } catch (err) {
+        console.error("Falha ao carregar disponibilidade:", err);
+    }
+}
+
+function renderAvailabilitySummary(s) {
+    const uptime = s.uptime_percent;
+    const uptimeEl = document.getElementById("avail-uptime");
+    uptimeEl.textContent = uptime === null || uptime === undefined ? "sem dados" : `${uptime}%`;
+    uptimeEl.className =
+        "avail-stat-value " +
+        (uptime === null || uptime === undefined
+            ? ""
+            : uptime >= 99
+            ? "online-text"
+            : uptime >= 90
+            ? "warn-text"
+            : "offline-text");
+
+    document.getElementById("avail-checks").textContent =
+        s.total_checks ? `${s.successful_checks} / ${s.total_checks}` : "0";
+    document.getElementById("avail-avg").textContent =
+        s.avg_response_time_ms !== null && s.avg_response_time_ms !== undefined
+            ? `${s.avg_response_time_ms} ms`
+            : "-";
+    document.getElementById("avail-last-success").textContent = fmtDateTime(s.last_success_at);
+    document.getElementById("avail-last-failure").textContent = fmtDateTime(s.last_failure_at);
+}
+
+function renderAvailabilityChart(series) {
+    const canvas = document.getElementById("availability-canvas");
+    if (!canvas) return;
+
+    const labels = series.map((p) => p.bucket_start);
+    const values = series.map((p) => p.uptime_percent);
+    const bucketUnit = series.length && series[0].bucket === "hour" ? "hour" : "day";
+    const colors = values.map((v) =>
+        v === null ? COLOR_MUTED : v >= 99 ? COLOR_GREEN : v >= 90 ? "#e0a53d" : COLOR_RED
+    );
+
+    const config = {
+        type: "bar",
+        data: {
+            labels,
+            datasets: [
+                {
+                    data: values,
+                    backgroundColor: colors,
+                    borderWidth: 0,
+                    borderRadius: 2,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const p = series[ctx.dataIndex];
+                            return p.uptime_percent === null
+                                ? "sem dados"
+                                : `${p.uptime_percent}% de pe (${p.successful_checks}/${p.total_checks})`;
+                        },
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    type: "time",
+                    time: {
+                        unit: bucketUnit,
+                        tooltipFormat: bucketUnit === "hour" ? "dd/MM HH:mm" : "dd/MM",
+                    },
+                    grid: { color: "#1e2b22" },
+                    ticks: { color: COLOR_MUTED, font: { size: 9 }, maxTicksLimit: 8 },
+                },
+                y: {
+                    min: 0,
+                    max: 100,
+                    grid: { color: "#1e2b22" },
+                    ticks: {
+                        color: COLOR_MUTED,
+                        font: { size: 9 },
+                        maxTicksLimit: 5,
+                        callback: (v) => `${v}%`,
+                    },
+                },
+            },
+        },
+    };
+
+    if (availabilityChart) {
+        availabilityChart.data = config.data;
+        availabilityChart.options = config.options;
+        availabilityChart.update();
+    } else {
+        availabilityChart = new Chart(canvas.getContext("2d"), config);
+    }
 }
 
 // ---------------- Renderizacao dos cards de equipamento ----------------

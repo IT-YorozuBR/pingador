@@ -15,6 +15,13 @@ cadastro -> ping automatico -> dashboard -> historico de quedas.
   linha do tempo de eventos).
 - Historico de eventos de queda/recuperacao, com horario, duracao da queda
   e tempo de resposta do ping.
+- Persistencia em **SQLite** (`db.py`) do historico de todas as verificacoes:
+  registra a ultima vez que cada equipamento respondeu com sucesso (sobrevive
+  a reinicializacao) e alimenta os graficos de disponibilidade por equipamento
+  (percentual de tempo de pe em 24h / 7d / 30d, resposta media, contagem de
+  verificacoes OK/total, ultima falha). Visivel ao abrir os detalhes de um
+  equipamento. Endpoints: `GET /api/availability` e
+  `GET /api/availability/series`.
 - Atualizacao automatica da tela via polling (JavaScript), sem precisar
   dar F5.
 - Pausar/reativar o monitoramento de um equipamento e remover equipamentos.
@@ -98,6 +105,7 @@ pingador/
 ├── app.py             # rotas Flask (paginas + API JSON)
 ├── models.py           # dataclasses Equipment e Event
 ├── storage.py           # "banco" em memoria (dicts/listas) + regras de negocio
+├── db.py                 # persistencia SQLite: historico de pings + disponibilidade
 ├── monitor.py            # scheduler em background + funcao de ping cross-platform
 ├── excel_sync.py          # leitura e sincronizacao periodica da planilha de inventario
 ├── Inventario IP.xlsx      # planilha de inventario (uma aba por base/categoria)
@@ -112,8 +120,12 @@ pingador/
 
 ## Limitacoes do MVP
 
-- **Sem persistencia**: ao reiniciar o processo Python, todos os
-  equipamentos e todo o historico sao perdidos (tudo vive em RAM).
+- **Persistencia parcial**: o cadastro de equipamentos e os eventos de
+  queda/recuperacao ainda vivem em RAM (recriados pela planilha ao subir).
+  O historico de verificacoes e a "ultima vez online" ficam em SQLite
+  (`pingador.db`, configuravel por `PINGADOR_DB_PATH`; no Docker vai para o
+  volume `pingador_db`). Amostras mais antigas que `PINGADOR_DB_RETENTION_DAYS`
+  (padrao 30) sao descartadas automaticamente.
 - **Sem autenticacao**: qualquer pessoa com acesso a URL pode
   cadastrar/remover equipamentos.
 - **Sem alertas**: o sistema apenas registra e mostra quedas, nao envia

@@ -636,6 +636,72 @@ main {
     color: var(--text-muted);
 }
 
+.detail-availability {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+}
+
+.detail-availability-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.detail-availability h3,
+.detail-history h3 {
+    margin: 0;
+    color: var(--green);
+    font-size: 0.95rem;
+}
+
+.window-switch {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.window-switch .btn.active {
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.availability-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px 18px;
+}
+
+.avail-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.avail-stat-label {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+}
+
+.avail-stat-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.warn-text { color: var(--orange); }
+.offline-text { color: var(--red); }
+
+.availability-chart-wrap {
+    position: relative;
+    height: 180px;
+    width: 100%;
+}
+
 .detail-history {
     display: flex;
     flex-direction: column;

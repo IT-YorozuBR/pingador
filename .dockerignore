@@ -1,6 +1,10 @@
 venv/
 __pycache__/
 *.pyc
+# Banco SQLite local de dev, nao vai pra imagem.
+pingador.db
+pingador.db-wal
+pingador.db-shm
 .git/
 .claude/
 # A planilha entra por volume no compose, nao precisa ir pra imagem.

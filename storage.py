@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime
 from typing import Optional
 
+import db
 from models import Equipment, Event, next_id, STATUS_WAITING, STATUS_ONLINE, STATUS_OFFLINE
 
 # quantidade de amostras de ping mantidas por equipamento (para o grafico
@@ -156,6 +157,10 @@ class InMemoryStore:
                 del self.equipments[eid]
                 self.ping_history.pop(eid, None)
                 self.events = [e for e in self.events if e.equipment_id != eid]
+                try:
+                    db.forget_equipment(eid)
+                except Exception:
+                    pass
                 removed += 1
 
             return {
@@ -175,6 +180,10 @@ class InMemoryStore:
                 del self.equipments[equipment_id]
                 self.ping_history.pop(equipment_id, None)
                 self.events = [e for e in self.events if e.equipment_id != equipment_id]
+                try:
+                    db.forget_equipment(equipment_id)
+                except Exception:
+                    pass
                 return True
             return False
 
@@ -280,6 +289,21 @@ class InMemoryStore:
                     "success": success,
                 }
             )
+
+            # persiste a amostra no SQLite (historico de disponibilidade e
+            # "ultima vez bem sucedida"). Falha de I/O aqui nao pode
+            # interromper o monitoramento.
+            try:
+                db.record_ping(
+                    equipment_id=equipment_id,
+                    ip=eq.ip,
+                    name=eq.name,
+                    success=success,
+                    response_time_ms=response_time_ms if success else None,
+                    ts=now,
+                )
+            except Exception:
+                pass
 
     def list_events(self, equipment_id: Optional[int] = None, limit: int = 200) -> list[Event]:
         with self._lock:

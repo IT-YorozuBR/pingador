@@ -6,6 +6,7 @@ monitoramento automatico rodando em background (ver monitor.py).
 """
 from flask import Flask, jsonify, render_template, request
 
+import db
 from excel_sync import EXCEL_PATH, start_excel_watcher, sync_now
 from models import STATUS_ONLINE, STATUS_OFFLINE
 from monitor import start_scheduler
@@ -33,10 +34,15 @@ def list_equipments():
     equipments = store.list_equipments()
     if category:
         equipments = [eq for eq in equipments if eq.category == category]
+    states = {s["equipment_id"]: s for s in db.list_states()}
     data = []
     for eq in equipments:
         d = eq.to_dict()
         d["events_count"] = len(store.list_events(eq.id, limit=10_000))
+        # snapshot persistido (sobrevive a reinicializacao)
+        st = states.get(eq.id, {})
+        d["last_success_at"] = st.get("last_success_at")
+        d["last_failure_at"] = st.get("last_failure_at")
         data.append(d)
     # ordena por nome para exibicao estavel
     data.sort(key=lambda e: e["name"].lower())
@@ -107,6 +113,52 @@ def excel_sync_now():
     except Exception as e:
         return jsonify({"error": f"Falha ao ler a planilha: {e}"}), 400
     return jsonify(result)
+
+
+# ---------------- API: disponibilidade (SQLite) ----------------
+
+@app.route("/api/availability", methods=["GET"])
+def availability():
+    """
+    Resumo de disponibilidade a partir do historico persistido em SQLite.
+
+    - com equipment_id: retorna o resumo daquele equipamento.
+    - sem equipment_id: retorna a lista de todos os equipamentos.
+
+    Parametro `window`: 1h, 6h, 12h, 24h (padrao), 48h, 7d, 14d, 30d, all.
+    """
+    window = request.args.get("window", default="24h")
+    equipment_id = request.args.get("equipment_id", type=int)
+
+    if equipment_id is not None:
+        data = db.get_availability(equipment_id, window)
+        eq = store.get_equipment(equipment_id)
+        data["equipment_id"] = equipment_id
+        data["name"] = eq.name if eq else None
+        return jsonify(data)
+
+    result = []
+    for eq in store.list_equipments():
+        data = db.get_availability(eq.id, window)
+        data["equipment_id"] = eq.id
+        data["name"] = eq.name
+        data["ip"] = eq.ip
+        data["category"] = eq.category
+        data["status"] = eq.status
+        result.append(data)
+    result.sort(key=lambda d: (d["uptime_percent"] is None, d["uptime_percent"] or 0))
+    return jsonify(result)
+
+
+@app.route("/api/availability/series", methods=["GET"])
+def availability_series():
+    """Serie temporal (por hora ou por dia) para o grafico de disponibilidade."""
+    equipment_id = request.args.get("equipment_id", type=int)
+    if equipment_id is None:
+        return jsonify({"error": "equipment_id e obrigatorio."}), 400
+    window = request.args.get("window", default="24h")
+    bucket = request.args.get("bucket")  # "hour" | "day" | None (auto)
+    return jsonify(db.get_availability_series(equipment_id, window, bucket))
 
 
 # ---------------- API: dashboard ----------------

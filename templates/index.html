@@ -208,6 +208,41 @@
                 <div><span class="detail-label">Ultima verificacao</span><span id="detail-last-checked"></span></div>
                 <div><span class="detail-label">Tempo de resposta</span><span id="detail-response-time"></span></div>
             </div>
+            <div class="detail-availability">
+                <div class="detail-availability-header">
+                    <h3>Disponibilidade</h3>
+                    <div class="window-switch" role="group" aria-label="Janela de tempo">
+                        <button type="button" class="btn btn-secondary btn-small active" data-window="24h">24h</button>
+                        <button type="button" class="btn btn-secondary btn-small" data-window="7d">7d</button>
+                        <button type="button" class="btn btn-secondary btn-small" data-window="30d">30d</button>
+                    </div>
+                </div>
+                <div class="availability-stats">
+                    <div class="avail-stat">
+                        <span class="avail-stat-label">TEMPO DE PE</span>
+                        <span class="avail-stat-value online-text" id="avail-uptime">-</span>
+                    </div>
+                    <div class="avail-stat">
+                        <span class="avail-stat-label">VERIFICACOES (OK / TOTAL)</span>
+                        <span class="avail-stat-value" id="avail-checks">-</span>
+                    </div>
+                    <div class="avail-stat">
+                        <span class="avail-stat-label">RESPOSTA MEDIA</span>
+                        <span class="avail-stat-value" id="avail-avg">-</span>
+                    </div>
+                    <div class="avail-stat">
+                        <span class="avail-stat-label">ULTIMA VEZ ONLINE</span>
+                        <span class="avail-stat-value" id="avail-last-success">-</span>
+                    </div>
+                    <div class="avail-stat">
+                        <span class="avail-stat-label">ULTIMA FALHA</span>
+                        <span class="avail-stat-value" id="avail-last-failure">-</span>
+                    </div>
+                </div>
+                <div class="availability-chart-wrap">
+                    <canvas id="availability-canvas"></canvas>
+                </div>
+            </div>
             <div class="detail-history">
                 <h3>Ultimas verificacoes</h3>
                 <div id="detail-history-list" class="detail-history-list"></div>

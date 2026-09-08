@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+
+# Banco SQLite com o historico de disponibilidade (gerado em runtime)
+pingador.db
+pingador.db-wal
+pingador.db-shm
