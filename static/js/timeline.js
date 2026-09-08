@@ -386,36 +386,32 @@ function showFocus(ev, animate = true) {
         `<path class="tl-focus-path${ongoing ? " ongoing" : ""}" ` +
         `d="M ${x0} ${y0} V ${ymid} H ${x1} V ${y1}"/>`;
 
-    const path = focusSvg.querySelector(".tl-focus-path");
-    if (!ongoing) {
-        // linha continua com animacao de "desenho"; se estiver so realinhando
-        // (pan/zoom), mostra ja completa
-        const len = path.getTotalLength();
-        path.style.strokeDasharray = len;
-        path.style.transition = "none";
-        path.style.strokeDashoffset = animate ? len : "0";
-        if (animate) {
-            requestAnimationFrame(() => {
-                path.style.transition = "stroke-dashoffset 0.35s ease";
-                path.style.strokeDashoffset = "0";
-            });
-        }
+    // linha ja nasce inteira (fade de ~90ms via CSS) - nada de "desenhar" lento.
+    // Em re-render de pan/zoom (animate=false) tira o fade pra nao piscar.
+    if (!animate) {
+        const path = focusSvg.querySelector(".tl-focus-path");
+        if (path) path.style.animation = ongoing ? "tlDashDrift 0.9s linear infinite" : "none";
     }
-    // ongoing: sem estilos inline -> usa o tracejado animado do CSS
 
     const secs = (upMs - downMs) / 1000;
-    focusLabel.textContent = ongoing
-        ? `offline ha ${fmtDuration(secs)} (ainda)`
-        : `ficou fora ${fmtDuration(secs)}`;
+    let labelText;
+    if (ongoing) {
+        labelText = `⚠ offline ha ${fmtDuration(secs)}`;
+    } else {
+        const rec = new Date(upMs);
+        labelText = `✔ voltou ${pad(rec.getHours())}:${pad(rec.getMinutes())} · fora ${fmtDuration(secs)}`;
+    }
+    focusLabel.textContent = labelText;
     focusLabel.classList.toggle("ongoing", ongoing);
+    focusLabel.classList.toggle("resolved", !ongoing);
     focusLabel.style.left = (x0 + x1) / 2 + "px";
     focusLabel.style.top = ymid + "px";
     focusLabel.hidden = false;
 
     stage.classList.add("focusing");
-    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi"));
+    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi", "hi-resolved"));
     const self = nodeEls.get(ev.id);
-    if (self) self.classList.add("hi");
+    if (self) self.classList.add("hi", ongoing ? "hi" : "hi-resolved");
     if (ev._mate) {
         const mate = nodeEls.get(ev._mate.id);
         if (mate) mate.classList.add("mate-hi");
@@ -427,7 +423,7 @@ function hideFocus() {
     focusSvg.innerHTML = "";
     focusLabel.hidden = true;
     stage.classList.remove("focusing");
-    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi"));
+    nodeEls.forEach((el) => el.classList.remove("hi", "mate-hi", "hi-resolved"));
 }
 
 // ------------------------- foco num equipamento na linha do tempo -------------------------
