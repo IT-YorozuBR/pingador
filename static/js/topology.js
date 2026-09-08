@@ -3,7 +3,7 @@
    de monitoramento ja produz (GET /api/topology). Sem ping novo.
    ============================================================ */
 
-const POLL_MS = 4000;
+const POLL_MS = 3000;
 
 const STATUS_CLASS = {
     online: "status-online",
@@ -17,9 +17,13 @@ const state = {
     connectSource: null,
     dirtyPositions: false,
     devicesByIp: new Map(),
+    prevStatus: new Map(),
     search: "",
     filterStatus: "",
     filterType: "",
+    lastRefreshAt: 0,
+    failStreak: 0,
+    pollInFlight: false,
 };
 
 let cy = null;
@@ -124,6 +128,8 @@ const CY_STYLE = [
     { selector: "edge.conn-degraded", style: { "line-color": "#f2994a", "line-style": "dashed" } },
     { selector: "edge:selected", style: { "line-color": "#3dd6e0", width: 3 } },
     { selector: "edge.dim", style: { opacity: 0.1 } },
+
+    { selector: "node.pulse-change", style: { "border-color": "#3dd6e0", "border-width": 4 } },
 ];
 
 function buildElements(data) {
@@ -300,7 +306,7 @@ function deviceMatches(d) {
     return true;
 }
 
-function applyFilters() {
+function applyFilters(centerOnHit) {
     if (!cy) return;
     const hasQuery = state.search || state.filterStatus || state.filterType;
     let firstHit = null;
@@ -320,7 +326,7 @@ function applyFilters() {
         });
     });
 
-    if (firstHit) {
+    if (firstHit && centerOnHit) {
         cy.animate({ center: { eles: firstHit }, zoom: Math.max(cy.zoom(), 1) }, { duration: 260 });
     }
 }
@@ -361,8 +367,9 @@ function updateSummary(sum) {
 }
 
 function reconcile(data) {
+    if (!data || !Array.isArray(data.devices)) return;
     state.devicesByIp = new Map(data.devices.map((d) => [d.ip, d]));
-    updateSummary(data.summary);
+    if (data.summary) updateSummary(data.summary);
 
     const seenNodes = new Set();
     cy.batch(() => {
@@ -386,6 +393,15 @@ function reconcile(data) {
             }
             ["status-online", "status-offline", "status-waiting"].forEach((c) => n.removeClass(c));
             n.addClass(STATUS_CLASS[d.status] || "status-waiting");
+
+            // pisca o no quando o status muda de um poll para o outro
+            const prev = state.prevStatus.get(d.ip);
+            if (prev !== undefined && prev !== d.status) {
+                const nn = n;
+                nn.addClass("pulse-change");
+                setTimeout(() => nn.removeClass("pulse-change"), 1000);
+            }
+            state.prevStatus.set(d.ip, d.status);
         });
         // nos que sumiram do sistema
         cy.nodes().forEach((n) => {
@@ -407,16 +423,65 @@ function reconcile(data) {
     });
 
     refreshDegraded();
-    applyFilters();
+    applyFilters(false);
 }
 
 async function refresh() {
+    if (state.pollInFlight) return;
+    state.pollInFlight = true;
     try {
-        const data = await fetch("/api/topology").then((r) => r.json());
-        reconcile(data);
+        const res = await fetch("/api/topology", { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        try {
+            reconcile(data);
+        } catch (e) {
+            // uma falha ao renderizar nao deve parecer queda de rede
+            console.error("topology reconcile:", e);
+        }
+        state.lastRefreshAt = Date.now();
+        state.failStreak = 0;
+        pingIndicator();
     } catch (err) {
+        state.failStreak++;
         console.error("topology refresh:", err);
+    } finally {
+        state.pollInFlight = false;
+        updateUpdatedLabel();
     }
+}
+
+function pingIndicator() {
+    const el = document.getElementById("topo-updated");
+    el.classList.remove("pinged");
+    void el.offsetWidth; // reinicia a animacao
+    el.classList.add("pinged");
+    setTimeout(() => el.classList.remove("pinged"), 600);
+}
+
+function updateUpdatedLabel() {
+    const el = document.getElementById("topo-updated");
+    const txt = document.getElementById("topo-updated-txt");
+    let cls = "";
+    if (!state.lastRefreshAt) {
+        cls = "err";
+        txt.textContent = state.failStreak ? "sem conexao" : "conectando...";
+    } else {
+        const secs = Math.round((Date.now() - state.lastRefreshAt) / 1000);
+        if (state.failStreak >= 2) {
+            cls = "err";
+            txt.textContent = `sem conexao (ha ${secs}s)`;
+        } else if (secs <= 4) {
+            txt.textContent = "atualizado agora";
+        } else if (secs < 20) {
+            txt.textContent = `atualizado ha ${secs}s`;
+        } else {
+            cls = "stale";
+            txt.textContent = `atualizado ha ${secs}s`;
+        }
+    }
+    el.classList.toggle("err", cls === "err");
+    el.classList.toggle("stale", cls === "stale");
 }
 
 // ------------------------- init -------------------------
@@ -431,7 +496,9 @@ async function init() {
     }
 
     state.devicesByIp = new Map(data.devices.map((d) => [d.ip, d]));
+    data.devices.forEach((d) => state.prevStatus.set(d.ip, d.status));
     updateSummary(data.summary);
+    state.lastRefreshAt = Date.now();
     document.getElementById("topo-empty").hidden = data.devices.length > 0;
 
     cy = cytoscape({
@@ -448,12 +515,26 @@ async function init() {
 
     cy.nodes().ungrabify();
 
-    if (!allNodesPositioned(data)) {
-        runAutoLayout(false, false);
-    } else {
-        cy.fit(cy.elements(), 60);
+    // Polling ligado O QUANTO ANTES: se qualquer coisa abaixo lancar excecao,
+    // a atualizacao automatica continua funcionando mesmo assim.
+    updateUpdatedLabel();
+    setInterval(updateUpdatedLabel, 1000);
+    setInterval(refresh, POLL_MS);
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") refresh();
+    });
+    window.addEventListener("focus", refresh);
+
+    try {
+        if (!allNodesPositioned(data)) {
+            runAutoLayout(false, false);
+        } else {
+            cy.fit(cy.elements(), 60);
+        }
+        refreshDegraded();
+    } catch (err) {
+        console.error("topology layout inicial:", err);
     }
-    refreshDegraded();
 
     // ---- eventos ----
     cy.on("tap", "node", (evt) => {
@@ -521,15 +602,15 @@ async function init() {
     document.getElementById("topo-search").addEventListener("input", (e) => {
         state.search = e.target.value.trim();
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(applyFilters, 180);
+        searchTimer = setTimeout(() => applyFilters(true), 180);
     });
     document.getElementById("topo-filter-status").addEventListener("change", (e) => {
         state.filterStatus = e.target.value;
-        applyFilters();
+        applyFilters(true);
     });
     document.getElementById("topo-filter-type").addEventListener("change", (e) => {
         state.filterType = e.target.value;
-        applyFilters();
+        applyFilters(true);
     });
 
     document.getElementById("ts-close").addEventListener("click", closeSide);
@@ -542,8 +623,6 @@ async function init() {
             `<option value="">Todos os tipos</option>` +
             cats.map((c) => `<option value="${c.replace(/"/g, "&quot;")}">${c}</option>`).join("");
     } catch (_) {}
-
-    setInterval(refresh, POLL_MS);
 }
 
 init();

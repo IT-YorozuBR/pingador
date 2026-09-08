@@ -66,6 +66,34 @@
 .topo-sum.online b { color: var(--green); }
 .topo-sum.offline b { color: var(--red); }
 
+.topo-updated {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding-left: 14px;
+    border-left: 1px solid var(--border-strong);
+    font-size: 0.66rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+.topo-updated-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 7px var(--green);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.topo-updated.stale .topo-updated-dot { background: var(--orange); box-shadow: 0 0 7px var(--orange); }
+.topo-updated.err .topo-updated-dot { background: var(--red); box-shadow: 0 0 7px var(--red); }
+.topo-updated.pinged .topo-updated-dot { animation: topoPing 0.5s ease; }
+
+@keyframes topoPing {
+    0% { transform: scale(1); }
+    45% { transform: scale(2.1); }
+    100% { transform: scale(1); }
+}
+
 /* -------------------- Controles -------------------- */
 
 .topo-controls {
