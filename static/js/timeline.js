@@ -484,7 +484,14 @@ function buildNode(ev) {
     const el = document.createElement("button");
     el.type = "button";
     el.className = `tl-node k-${ev.kind} lane-${LANE_OF[ev.kind]}`;
-    el.innerHTML = `<span class="tl-node-ring"></span><span class="tl-node-core"></span>`;
+    const typeSvg =
+        typeof window.deviceIcon === "function"
+            ? window.deviceIcon(ev.category, ev.equipment_name)
+            : "";
+    el.innerHTML =
+        `<span class="tl-node-ring"></span>` +
+        `<span class="tl-node-core"></span>` +
+        `<span class="tl-node-type">${typeSvg}</span>`;
     const enter = () => {
         showPop(ev, el);
         if (ev.kind === "down" || ev.kind === "up") showFocus(ev);

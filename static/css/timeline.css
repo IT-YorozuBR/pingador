@@ -404,8 +404,8 @@ select.tl-input { cursor: pointer; }
 
 .tl-node {
     position: absolute;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     border: none;
     background: none;
@@ -455,6 +455,37 @@ select.tl-input { cursor: pointer; }
 .tl-node:focus-visible .tl-node-core { transform: scale(1.55); }
 
 .tl-node.pinned .tl-node-core { transform: scale(1.7); }
+
+/* miolo vira um disco escuro: o anel/brilho continua indicando o tipo de
+   evento (queda/recuperacao/cadastro/remocao) e o icone central indica o
+   tipo de equipamento cadastrado */
+.tl-node.k-down   .tl-node-core,
+.tl-node.k-up     .tl-node-core,
+.tl-node.k-created .tl-node-core,
+.tl-node.k-removed .tl-node-core {
+    background: #0c141d;
+    border: 1.5px solid currentColor;
+}
+
+.tl-node-type {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #eaf2f8;
+    pointer-events: none;
+    transition: transform 0.15s ease;
+}
+
+.tl-node-type svg { width: 12px; height: 12px; display: block; }
+
+.tl-node:hover .tl-node-type,
+.tl-node:focus-visible .tl-node-type,
+.tl-node.hi .tl-node-type,
+.tl-node.hi-resolved .tl-node-type { transform: scale(1.55); }
+
+.tl-node.pinned .tl-node-type { transform: scale(1.7); }
 
 /* queda sem retorno: destaque um pouco mais forte e permanente */
 .tl-node.unrecovered { z-index: 8; }
