@@ -222,6 +222,15 @@ select.tl-input { cursor: pointer; }
 .tl-range button:hover,
 .tl-zoom button:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 
+.tl-zoom button:disabled {
+    opacity: 0.35;
+    cursor: default;
+    background: transparent;
+}
+
+#tl-icon-dec { font-size: 0.6rem; }
+#tl-icon-inc { font-size: 0.95rem; }
+
 .tl-range button.active {
     color: var(--bg);
     background: var(--tl-cyan);
@@ -268,6 +277,8 @@ select.tl-input { cursor: pointer; }
 }
 
 .tl-stage {
+    /* fator de tamanho dos marcadores/icones (ajustavel pelos botoes) */
+    --tl-icon-scale: 1;
     position: relative;
     flex: 1 1 0;
     min-width: 0;          /* deixa o palco encolher quando a aba lateral abre */
@@ -404,8 +415,8 @@ select.tl-input { cursor: pointer; }
 
 .tl-node {
     position: absolute;
-    width: 20px;
-    height: 20px;
+    width: calc(20px * var(--tl-icon-scale));
+    height: calc(20px * var(--tl-icon-scale));
     padding: 0;
     border: none;
     background: none;
@@ -478,7 +489,11 @@ select.tl-input { cursor: pointer; }
     transition: transform 0.15s ease;
 }
 
-.tl-node-type svg { width: 12px; height: 12px; display: block; }
+.tl-node-type svg {
+    width: calc(12px * var(--tl-icon-scale));
+    height: calc(12px * var(--tl-icon-scale));
+    display: block;
+}
 
 .tl-node:hover .tl-node-type,
 .tl-node:focus-visible .tl-node-type,
@@ -486,6 +501,40 @@ select.tl-input { cursor: pointer; }
 .tl-node.hi-resolved .tl-node-type { transform: scale(1.55); }
 
 .tl-node.pinned .tl-node-type { transform: scale(1.7); }
+
+/* -------------------- marcador de grupo (cluster) -------------------- */
+
+.tl-cluster {
+    width: calc(24px * var(--tl-icon-scale));
+    height: calc(24px * var(--tl-icon-scale));
+    z-index: 6;
+}
+
+.tl-cluster .tl-node-core {
+    background: #0c141d;
+    border: 1.5px solid currentColor;
+    box-shadow: 0 0 10px currentColor, 0 0 3px #fff inset;
+}
+
+.tl-cluster-count {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(0.62rem * var(--tl-icon-scale));
+    font-weight: 700;
+    line-height: 1;
+    color: #eaf2f8;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    transition: transform 0.15s ease;
+}
+
+.tl-cluster:hover .tl-node-core,
+.tl-cluster:focus-visible .tl-node-core { transform: scale(1.28); }
+.tl-cluster:hover .tl-cluster-count,
+.tl-cluster:focus-visible .tl-cluster-count { transform: scale(1.28); }
 
 /* queda sem retorno: destaque um pouco mais forte e permanente */
 .tl-node.unrecovered { z-index: 8; }

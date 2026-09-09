@@ -13,6 +13,11 @@ const KIND_LABEL = {
 const LANE_OF = { down: 0, up: 1, created: 2, removed: 2 };
 const POLL_MS = 5000;
 
+// largura (px) de uma "celula" de agrupamento: eventos da mesma faixa/tipo
+// que caem dentro dessa distancia viram um unico marcador com contagem.
+// ao dar zoom in a celula cobre menos tempo -> os grupos se desfazem.
+const CLUSTER_PX = 26;
+
 const RANGE_MS = {
     "1h": 3600e3,
     "6h": 21600e3,
@@ -42,6 +47,7 @@ const state = {
     boundsLastMs: null,
     focusEquipmentId: null,   // equipamento em foco na linha do tempo
     focusEquipmentName: "",
+    cluster: true,            // agrupar marcadores quando muito juntos (zoom out)
 };
 
 const stage = document.getElementById("tl-stage");
@@ -69,6 +75,7 @@ const AXIS_H = 34; // deve casar com --tl-axis-h no CSS
 let focusEv = null; // evento (down/up) com a "linha da queda" em foco no hover
 
 const nodeEls = new Map();     // event.id -> element
+const clusterEls = new Map();  // chave da celula -> element de grupo
 const outageEls = new Map();   // "o"+event.id -> element
 const everShown = new Set();
 let equipmentById = new Map(); // equipment_id -> objeto de /api/equipments (p/ descricao etc.)
@@ -145,21 +152,72 @@ function scheduleLayout() {
     });
 }
 
+// tamanho (em ms) da celula de agrupamento no zoom atual. atrelado a escala
+// de intervalos "bonitos" do eixo -> ao dar zoom a granularidade cai em degraus
+// estaveis (os grupos nao ficam piscando a cada pixel de pan/zoom).
+function clusterBinMs() {
+    const raw = CLUSTER_PX / state.pxPerMs;
+    return NICE_INTERVALS.find((n) => n >= raw) || NICE_INTERVALS[NICE_INTERVALS.length - 1];
+}
+
 function layout() {
     const w = stage.clientWidth;
     const margin = 80;
     const visibleIds = new Set();
+    const visibleClusterKeys = new Set();
     let visibleCount = 0;
     const fid = state.focusEquipmentId;
     stage.classList.toggle("equip-focusing", fid != null);
 
+    // 1) coleta os eventos visiveis
+    const inView = [];
     for (const ev of state.events) {
         if (!state.kinds.has(ev.kind)) continue;
         const x = xOf(ev.ms);
         if (x < -margin || x > w + margin) continue;
         if (fid == null || ev.equipment_id === fid) visibleCount++;
-        visibleIds.add(ev.id);
+        inView.push({ ev, x });
+    }
 
+    // 2) agrupa por faixa + tipo + celula (quando "agrupar" ligado e sem foco
+    //    em equipamento). celula com 1 evento -> marcador normal.
+    const singles = [];
+    const groups = [];
+    if (state.cluster && fid == null) {
+        const binMs = clusterBinMs();
+        const bins = new Map();
+        for (const item of inView) {
+            const lane = LANE_OF[item.ev.kind];
+            const cell = Math.round(item.ev.ms / binMs);
+            const key = lane + "|" + item.ev.kind + "|" + cell;
+            let b = bins.get(key);
+            if (!b) {
+                b = { key, lane, kind: item.ev.kind, sumX: 0, members: [] };
+                bins.set(key, b);
+            }
+            b.sumX += item.x;
+            b.members.push(item.ev);
+        }
+        for (const b of bins.values()) {
+            if (b.members.length === 1) {
+                singles.push({ ev: b.members[0], x: b.sumX });
+            } else {
+                groups.push({
+                    key: b.key,
+                    kind: b.kind,
+                    lane: b.lane,
+                    x: b.sumX / b.members.length,
+                    members: b.members,
+                });
+            }
+        }
+    } else {
+        for (const item of inView) singles.push(item);
+    }
+
+    // 3) marcadores individuais
+    for (const { ev, x } of singles) {
+        visibleIds.add(ev.id);
         let el = nodeEls.get(ev.id);
         if (!el) {
             el = buildNode(ev);
@@ -182,6 +240,30 @@ function layout() {
         if (!visibleIds.has(id)) {
             el.remove();
             nodeEls.delete(id);
+        }
+    }
+
+    // 4) marcadores de grupo
+    for (const g of groups) {
+        visibleClusterKeys.add(g.key);
+        let el = clusterEls.get(g.key);
+        if (!el) {
+            el = buildCluster();
+            clusterEls.set(g.key, el);
+            nodesLayer.appendChild(el);
+        }
+        el._cluster = g;
+        el.className = `tl-node tl-cluster k-${g.kind} lane-${g.lane} in` +
+            (state.dragging ? " no-anim" : "");
+        el.style.left = g.x + "px";
+        el.querySelector(".tl-cluster-count").textContent =
+            g.members.length > 99 ? "99+" : String(g.members.length);
+    }
+
+    for (const [key, el] of clusterEls) {
+        if (!visibleClusterKeys.has(key)) {
+            el.remove();
+            clusterEls.delete(key);
         }
     }
 
@@ -556,7 +638,10 @@ function showPop(ev, el, pinned) {
         `<div class="tl-pop-name">${escapeHtml(ev.equipment_name || "Equipamento #" + ev.equipment_id)}</div>` +
         rows.join("");
     pop.hidden = false;
+    positionPop(el);
+}
 
+function positionPop(el) {
     const r = el.getBoundingClientRect();
     const pr = pop.getBoundingClientRect();
     let left = r.left + r.width / 2 - pr.width / 2;
@@ -565,6 +650,88 @@ function showPop(ev, el, pinned) {
     if (top < 10) top = r.bottom + 12;
     pop.style.left = left + "px";
     pop.style.top = top + "px";
+}
+
+// ------------------------- marcadores de grupo (cluster) -------------------------
+
+function buildCluster() {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "tl-node tl-cluster";
+    el.innerHTML =
+        `<span class="tl-node-ring"></span>` +
+        `<span class="tl-node-core"></span>` +
+        `<span class="tl-cluster-count"></span>`;
+    const enter = () => showClusterPop(el._cluster, el);
+    const leave = () => scheduleHidePop();
+    el.addEventListener("mouseenter", enter);
+    el.addEventListener("mouseleave", leave);
+    el.addEventListener("focus", enter);
+    el.addEventListener("blur", leave);
+    el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        zoomIntoCluster(el._cluster);
+    });
+    return el;
+}
+
+function showClusterPop(c, el) {
+    if (!c) return;
+    if (popHideTimer) {
+        clearTimeout(popHideTimer);
+        popHideTimer = null;
+    }
+    if (pinnedId) return;
+
+    const times = c.members.map((m) => m.ms);
+    const a = Math.min(...times);
+    const b = Math.max(...times);
+    const names = [];
+    const seen = new Set();
+    for (const m of c.members) {
+        const n = m.equipment_name || "Equipamento #" + m.equipment_id;
+        if (!seen.has(n)) {
+            seen.add(n);
+            names.push(n);
+        }
+    }
+    const listRows = names
+        .slice(0, 6)
+        .map((n) => `<div class="tl-pop-row">&bull; ${escapeHtml(n)}</div>`)
+        .join("");
+    const moreRow =
+        names.length > 6
+            ? `<div class="tl-pop-row tl-pop-desc">+${names.length - 6} outros equipamentos</div>`
+            : "";
+
+    pop.className = `tl-pop k-${c.kind}`;
+    pop.innerHTML =
+        `<div class="tl-pop-kind">${c.members.length} &times; ${KIND_LABEL[c.kind]}</div>` +
+        `<div class="tl-pop-name">${fmtShort(a)}${a === b ? "" : "  &rarr;  " + fmtShort(b)}</div>` +
+        listRows +
+        moreRow +
+        `<div class="tl-pop-row tl-pop-desc">clique para aproximar</div>`;
+    pop.hidden = false;
+    positionPop(el);
+}
+
+function zoomIntoCluster(c) {
+    if (!c) return;
+    const times = c.members.map((m) => m.ms);
+    let a = Math.min(...times);
+    let b = Math.max(...times);
+    if (b - a < 60e3) {
+        const mid = (a + b) / 2;
+        a = mid - 30e3;
+        b = mid + 30e3;
+    }
+    const padMs = (b - a) * 0.25;
+    setFollow(false);
+    unpin();
+    hidePop();
+    fitRange(a - padMs, b + padMs);
+    clampView();
+    scheduleLayout();
 }
 
 function scheduleHidePop() {
@@ -917,6 +1084,55 @@ document.getElementById("tl-follow").addEventListener("change", (e) => {
     state.follow = e.target.checked;
     if (state.follow) goToNow(true);
 });
+
+const clusterToggle = document.getElementById("tl-cluster");
+if (clusterToggle) {
+    state.cluster = clusterToggle.checked;
+    clusterToggle.addEventListener("change", (e) => {
+        state.cluster = e.target.checked;
+        unpin();
+        hidePop();
+        scheduleLayout();
+    });
+}
+
+// ------------------------- tamanho dos icones -------------------------
+
+const ICON_SCALE_KEY = "tl:iconScale";
+const ICON_SCALE_MIN = 0.7;
+const ICON_SCALE_MAX = 1.9;
+const ICON_SCALE_STEP = 0.15;
+let iconScale = 1;
+try {
+    const saved = parseFloat(localStorage.getItem(ICON_SCALE_KEY));
+    if (saved >= ICON_SCALE_MIN && saved <= ICON_SCALE_MAX) iconScale = saved;
+} catch (_) {}
+
+function applyIconScale() {
+    stage.style.setProperty("--tl-icon-scale", iconScale.toFixed(2));
+    try {
+        localStorage.setItem(ICON_SCALE_KEY, String(iconScale));
+    } catch (_) {}
+    const dec = document.getElementById("tl-icon-dec");
+    const inc = document.getElementById("tl-icon-inc");
+    if (dec) dec.disabled = iconScale <= ICON_SCALE_MIN + 1e-6;
+    if (inc) inc.disabled = iconScale >= ICON_SCALE_MAX - 1e-6;
+}
+
+function bumpIconScale(dir) {
+    iconScale = clamp(
+        Math.round((iconScale + dir * ICON_SCALE_STEP) * 100) / 100,
+        ICON_SCALE_MIN,
+        ICON_SCALE_MAX
+    );
+    applyIconScale();
+}
+
+applyIconScale();
+const iconDec = document.getElementById("tl-icon-dec");
+const iconInc = document.getElementById("tl-icon-inc");
+if (iconDec) iconDec.addEventListener("click", () => bumpIconScale(-1));
+if (iconInc) iconInc.addEventListener("click", () => bumpIconScale(1));
 
 function goToNow(animate) {
     const w = stage.clientWidth;
