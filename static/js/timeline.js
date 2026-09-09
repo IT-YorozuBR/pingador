@@ -130,7 +130,7 @@ function minPxPerMs() {
     return (stage.clientWidth || 1000) / (420 * 86400e3); // ~14 meses de ponta a ponta
 }
 function maxPxPerMs() {
-    return (stage.clientWidth || 1000) / 20e3; // ~20s de ponta a ponta
+    return (stage.clientWidth || 1000) / 1000; // ~1s de ponta a ponta
 }
 
 function viewEndMs() {
@@ -152,12 +152,14 @@ function scheduleLayout() {
     });
 }
 
-// tamanho (em ms) da celula de agrupamento no zoom atual. atrelado a escala
-// de intervalos "bonitos" do eixo -> ao dar zoom a granularidade cai em degraus
-// estaveis (os grupos nao ficam piscando a cada pixel de pan/zoom).
+// tamanho (em ms) da celula de agrupamento no zoom atual: e o tempo coberto
+// por CLUSTER_PX pixels, arredondado para a proxima potencia de 2 (degraus
+// estaveis, sem piscar a cada pixel de pan/zoom). SEM piso fixo -> ao dar
+// zoom in a celula encolhe indefinidamente e os grupos se desfazem ate
+// sobrarem apenas eventos realmente simultaneos.
 function clusterBinMs() {
     const raw = CLUSTER_PX / state.pxPerMs;
-    return NICE_INTERVALS.find((n) => n >= raw) || NICE_INTERVALS[NICE_INTERVALS.length - 1];
+    return Math.pow(2, Math.ceil(Math.log2(Math.max(raw, 1e-6))));
 }
 
 function layout() {
@@ -720,16 +722,21 @@ function zoomIntoCluster(c) {
     const times = c.members.map((m) => m.ms);
     let a = Math.min(...times);
     let b = Math.max(...times);
-    if (b - a < 60e3) {
-        const mid = (a + b) / 2;
-        a = mid - 30e3;
-        b = mid + 30e3;
-    }
-    const padMs = (b - a) * 0.25;
+    const spread = b - a;
     setFollow(false);
     unpin();
     hidePop();
-    fitRange(a - padMs, b + padMs);
+
+    if (spread < 400) {
+        // eventos praticamente simultaneos: aproxima o maximo possivel
+        // centralizado no grupo (mais que isso nao separa mesmo).
+        const mid = (a + b) / 2;
+        state.pxPerMs = maxPxPerMs();
+        state.viewStartMs = mid - (stage.clientWidth || 1000) / state.pxPerMs / 2;
+    } else {
+        const padMs = spread * 0.3;
+        fitRange(a - padMs, b + padMs);
+    }
     clampView();
     scheduleLayout();
 }
