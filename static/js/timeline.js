@@ -130,7 +130,7 @@ function minPxPerMs() {
     return (stage.clientWidth || 1000) / (420 * 86400e3); // ~14 meses de ponta a ponta
 }
 function maxPxPerMs() {
-    return (stage.clientWidth || 1000) / 1000; // ~1s de ponta a ponta
+    return (stage.clientWidth || 1000) / 20e3; // ~20s de ponta a ponta
 }
 
 function viewEndMs() {
@@ -152,14 +152,12 @@ function scheduleLayout() {
     });
 }
 
-// tamanho (em ms) da celula de agrupamento no zoom atual: e o tempo coberto
-// por CLUSTER_PX pixels, arredondado para a proxima potencia de 2 (degraus
-// estaveis, sem piscar a cada pixel de pan/zoom). SEM piso fixo -> ao dar
-// zoom in a celula encolhe indefinidamente e os grupos se desfazem ate
-// sobrarem apenas eventos realmente simultaneos.
+// tamanho (em ms) da celula de agrupamento no zoom atual. atrelado a escala
+// de intervalos "bonitos" do eixo -> ao dar zoom a granularidade cai em degraus
+// estaveis (os grupos nao ficam piscando a cada pixel de pan/zoom).
 function clusterBinMs() {
     const raw = CLUSTER_PX / state.pxPerMs;
-    return Math.pow(2, Math.ceil(Math.log2(Math.max(raw, 1e-6))));
+    return NICE_INTERVALS.find((n) => n >= raw) || NICE_INTERVALS[NICE_INTERVALS.length - 1];
 }
 
 function layout() {
@@ -672,7 +670,7 @@ function buildCluster() {
     el.addEventListener("blur", leave);
     el.addEventListener("click", (e) => {
         e.stopPropagation();
-        zoomIntoCluster(el._cluster);
+        openClusterPicker(el._cluster);
     });
     return el;
 }
@@ -712,33 +710,102 @@ function showClusterPop(c, el) {
         `<div class="tl-pop-name">${fmtShort(a)}${a === b ? "" : "  &rarr;  " + fmtShort(b)}</div>` +
         listRows +
         moreRow +
-        `<div class="tl-pop-row tl-pop-desc">clique para aproximar</div>`;
+        `<div class="tl-pop-row tl-pop-desc">clique para escolher um equipamento</div>`;
     pop.hidden = false;
     positionPop(el);
 }
 
-function zoomIntoCluster(c) {
-    if (!c) return;
-    const times = c.members.map((m) => m.ms);
-    let a = Math.min(...times);
-    let b = Math.max(...times);
-    const spread = b - a;
-    setFollow(false);
+// modal central: lista todos os eventos do grupo (que ocorreram juntos)
+// para o usuario escolher qual equipamento focar.
+const pickerEl = document.getElementById("tl-picker");
+const pickerListEl = document.getElementById("tl-picker-list");
+
+function hms(ms) {
+    const d = new Date(ms);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function openClusterPicker(c) {
+    if (!c || !pickerEl) return;
     unpin();
     hidePop();
+    hideFocus();
 
-    if (spread < 400) {
-        // eventos praticamente simultaneos: aproxima o maximo possivel
-        // centralizado no grupo (mais que isso nao separa mesmo).
-        const mid = (a + b) / 2;
-        state.pxPerMs = maxPxPerMs();
-        state.viewStartMs = mid - (stage.clientWidth || 1000) / state.pxPerMs / 2;
-    } else {
-        const padMs = spread * 0.3;
-        fitRange(a - padMs, b + padMs);
-    }
-    clampView();
-    scheduleLayout();
+    const times = c.members.map((m) => m.ms);
+    const a = Math.min(...times);
+    const b = Math.max(...times);
+
+    const kindEl = document.getElementById("tl-picker-kind");
+    kindEl.className = "tl-picker-kind k-" + c.kind;
+    kindEl.textContent = c.members.length + " × " + KIND_LABEL[c.kind];
+    document.getElementById("tl-picker-sub").textContent =
+        a === b ? fmtDateTime(a) : `${fmtShort(a)}  →  ${fmtShort(b)}`;
+
+    const items = c.members
+        .slice()
+        .sort(
+            (x, y) =>
+                x.ms - y.ms ||
+                String(x.equipment_name || "").localeCompare(
+                    String(y.equipment_name || ""),
+                    "pt-BR"
+                )
+        );
+
+    pickerListEl.innerHTML = items
+        .map((ev, i) => {
+            const name = ev.equipment_name || "Equipamento #" + ev.equipment_id;
+            const icon =
+                typeof window.deviceIcon === "function"
+                    ? window.deviceIcon(ev.category, ev.equipment_name)
+                    : "";
+            const meta = [ev.ip, ev.category].filter(Boolean).join("  ·  ");
+            let extra = "";
+            if (ev.kind === "up" && ev.duration_seconds != null) {
+                extra = "queda de " + fmtDuration(ev.duration_seconds);
+            } else if (ev.kind === "down" && ev._unrecovered) {
+                extra = "ainda offline";
+            } else if (ev.kind === "up" && ev.response_time_ms != null) {
+                extra = ev.response_time_ms + " ms";
+            }
+            return (
+                `<button type="button" class="tl-picker-item k-${ev.kind}" data-i="${i}">` +
+                `<span class="tl-picker-ico">${icon}</span>` +
+                `<span class="tl-picker-body">` +
+                `<span class="tl-picker-name">${escapeHtml(name)}</span>` +
+                `<span class="tl-picker-meta">${escapeHtml(meta)}${
+                    extra ? "  ·  " + escapeHtml(extra) : ""
+                }</span>` +
+                `</span>` +
+                `<span class="tl-picker-time">${hms(ev.ms)}</span>` +
+                `</button>`
+            );
+        })
+        .join("");
+    pickerListEl._items = items;
+
+    pickerEl.hidden = false;
+}
+
+function closeClusterPicker() {
+    if (pickerEl) pickerEl.hidden = true;
+}
+
+if (pickerEl) {
+    pickerListEl.addEventListener("click", (e) => {
+        const btn = e.target.closest(".tl-picker-item");
+        if (!btn) return;
+        const ev = (pickerListEl._items || [])[+btn.dataset.i];
+        if (!ev) return;
+        closeClusterPicker();
+        openEquipmentDetail(ev);
+    });
+    document
+        .getElementById("tl-picker-close")
+        .addEventListener("click", closeClusterPicker);
+    pickerEl.addEventListener("click", (e) => {
+        if (e.target === pickerEl) closeClusterPicker();
+    });
 }
 
 function scheduleHidePop() {
@@ -1069,7 +1136,8 @@ document.addEventListener("keydown", (e) => {
     } else if (e.key === "Home") {
         goToNow(true);
     } else if (e.key === "Escape") {
-        if (!bellPanel.hidden) closeBell();
+        if (pickerEl && !pickerEl.hidden) closeClusterPicker();
+        else if (!bellPanel.hidden) closeBell();
         else if (!sidePanel.hidden) closeEquipmentDetail();
         else unpin();
     }
