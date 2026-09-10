@@ -1,3 +1,6 @@
 Flask==3.0.3
-openpyxl==3.1.5
 gunicorn==23.0.0
+
+# Necessario APENAS para o import unico da planilha (import_inventory.py).
+# Pode ser removido junto com import_inventory.py depois da migracao.
+openpyxl==3.1.5

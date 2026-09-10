@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 import db
-from models import Equipment, Event, next_id, STATUS_WAITING, STATUS_ONLINE, STATUS_OFFLINE
+from models import Equipment, Event, STATUS_WAITING, STATUS_ONLINE, STATUS_OFFLINE
 
 # quantidade de amostras de ping mantidas por equipamento (para o grafico
 # estilo "monitor cardiaco")
@@ -42,6 +42,7 @@ class ValidationError(Exception):
 class InMemoryStore:
     def __init__(self):
         self._lock = threading.RLock()
+        self._loaded = False
         self.equipments: dict[int, Equipment] = {}
         self.events: list[Event] = []
         # historico curto de amostras de ping por equipamento, usado no
@@ -50,6 +51,39 @@ class InMemoryStore:
         self.ping_history: dict[int, deque] = {}
 
     # ---------- Equipamentos ----------
+
+    def load(self) -> None:
+        """
+        Hidrata self.equipments a partir da tabela `equipment` (db.py).
+        Chamado uma vez no boot, antes do scheduler. Idempotente.
+
+        Os campos "ao vivo" (status real, last_checked, tempo de resposta)
+        nao sao restaurados de proposito: o proximo ciclo de verificacao
+        (dentro de 1x `frequency`) os recompoe. `down_count` e semeado do
+        historico de eventos por IP.
+        """
+        with self._lock:
+            if self._loaded:
+                return
+            downs = db.down_counts_by_ip()
+            now = datetime.now()
+            for r in db.list_equipment():
+                eq = Equipment(
+                    id=r["id"],
+                    ip=r["ip"],
+                    name=r["name"],
+                    description=r["description"] or "",
+                    frequency=r["frequency"],
+                    category=r["category"] or "Manual",
+                    source=r["source"] or "manual",
+                    monitoring_active=bool(r["monitoring_active"]),
+                    status=STATUS_WAITING,
+                    next_check_at=now,
+                )
+                eq.down_count = downs.get(eq.ip, 0)
+                self.equipments[eq.id] = eq
+                self.ping_history[eq.id] = deque(maxlen=PING_HISTORY_MAXLEN)
+            self._loaded = True
 
     def validate_equipment_input(self, ip: str, name: str, description: str, frequency):
         if not name or not name.strip():
@@ -79,8 +113,18 @@ class InMemoryStore:
             ip, name, description, frequency
         )
         with self._lock:
+            if any(e.ip == ip for e in self.equipments.values()):
+                raise ValidationError(f"Ja existe um equipamento com o IP {ip}.")
+            try:
+                new_id = db.insert_equipment(
+                    ip=ip, name=name, description=description, frequency=frequency,
+                    category=category, source=source, monitoring_active=True,
+                )
+            except db.EquipmentIPConflict:
+                raise ValidationError(f"Ja existe um equipamento com o IP {ip}.")
+
             eq = Equipment(
-                id=next_id(),
+                id=new_id,
                 ip=ip,
                 name=name,
                 description=description,
@@ -101,92 +145,58 @@ class InMemoryStore:
                 pass
             return eq
 
-    def sync_from_excel(self, entries: list[dict]) -> dict:
+    def update_equipment(
+        self, equipment_id: int,
+        *, ip=None, name=None, description=None, frequency=None, category=None,
+    ) -> Optional[Equipment]:
         """
-        Sincroniza os equipamentos com a lista de entradas lidas da planilha
-        de inventario (uma entrada por IP, ver excel_sync.py).
-
-        Equipamentos com source="excel" sao criados/atualizados/removidos
-        para espelhar o conteudo atual da planilha. Equipamentos cadastrados
-        manualmente pela tela (source="manual") nunca sao alterados aqui,
-        mesmo que o IP tambem apareca na planilha.
+        Edita um equipamento ja cadastrado (tela de edicao). Valida os
+        campos, atualiza o objeto em RAM e persiste na tabela `equipment`.
+        Se a frequencia mudar, re-agenda a proxima verificacao.
         """
         with self._lock:
-            existing_by_ip = {eq.ip: eq for eq in self.equipments.values()}
-            seen_ips = set()
-            added = updated = removed = 0
+            eq = self.equipments.get(equipment_id)
+            if not eq:
+                return None
 
-            for entry in entries:
-                ip = entry["ip"]
-                seen_ips.add(ip)
-                eq = existing_by_ip.get(ip)
+            ip, name, description, frequency = self.validate_equipment_input(
+                ip, name, description, frequency
+            )
+            category = (category or eq.category or "Manual").strip() or "Manual"
 
-                if eq is None:
-                    eq = Equipment(
-                        id=next_id(),
-                        ip=ip,
-                        name=entry["name"],
-                        description=entry["description"],
-                        frequency=entry["frequency"],
-                        category=entry["category"],
-                        source="excel",
-                        status=STATUS_WAITING,
-                        next_check_at=datetime.now(),
-                    )
-                    self.equipments[eq.id] = eq
-                    self.ping_history[eq.id] = deque(maxlen=PING_HISTORY_MAXLEN)
-                    try:
-                        db.record_event(
-                            eq.id, eq.name, eq.ip, "created", category=eq.category,
-                            current_status=eq.status, dedupe_created_by_ip=True,
-                        )
-                    except Exception:
-                        pass
-                    added += 1
-                elif eq.source == "excel":
-                    changed = False
-                    if eq.name != entry["name"]:
-                        eq.name = entry["name"]
-                        changed = True
-                    if eq.description != entry["description"]:
-                        eq.description = entry["description"]
-                        changed = True
-                    if eq.category != entry["category"]:
-                        eq.category = entry["category"]
-                        changed = True
-                    if eq.frequency != entry["frequency"]:
-                        eq.frequency = entry["frequency"]
-                        changed = True
-                    if changed:
-                        updated += 1
-                # equipamento manual com mesmo IP: mantido como esta, sem
-                # alteracoes (mas o IP nao sera removido abaixo por nao ter
-                # source == "excel")
+            if ip != eq.ip and any(
+                e.ip == ip and e.id != equipment_id for e in self.equipments.values()
+            ):
+                raise ValidationError(f"Ja existe um equipamento com o IP {ip}.")
 
-            to_remove = [
-                eq.id for eq in self.equipments.values()
-                if eq.source == "excel" and eq.ip not in seen_ips
-            ]
-            for eid in to_remove:
-                gone = self.equipments.pop(eid)
-                self.ping_history.pop(eid, None)
-                self.events = [e for e in self.events if e.equipment_id != eid]
+            old_ip = eq.ip
+            freq_changed = frequency != eq.frequency
+
+            eq.ip = ip
+            eq.name = name
+            eq.description = description
+            eq.frequency = frequency
+            eq.category = category
+            if freq_changed:
+                eq.next_check_at = datetime.now()
+
+            try:
+                db.update_equipment(
+                    equipment_id, ip=ip, name=name, description=description,
+                    frequency=frequency, category=category,
+                )
+            except db.EquipmentIPConflict:
+                raise ValidationError(f"Ja existe um equipamento com o IP {ip}.")
+            except Exception:
+                pass
+
+            if ip != old_ip:
                 try:
-                    db.record_event(
-                        eid, gone.name, gone.ip, "removed", category=gone.category,
-                        previous_status=gone.status,
-                    )
-                    db.forget_equipment(eid)
+                    db.rekey_device_layout(old_ip, ip)
                 except Exception:
                     pass
-                removed += 1
 
-            return {
-                "added": added,
-                "updated": updated,
-                "removed": removed,
-                "total_in_excel": len(entries),
-            }
+            return eq
 
     def list_categories(self) -> list[str]:
         with self._lock:
@@ -203,6 +213,7 @@ class InMemoryStore:
                         equipment_id, gone.name, gone.ip, "removed",
                         category=gone.category, previous_status=gone.status,
                     )
+                    db.delete_equipment_row(equipment_id)
                     db.forget_equipment(equipment_id)
                 except Exception:
                     pass
@@ -219,6 +230,10 @@ class InMemoryStore:
                 # ao reativar, verifica assim que possivel
                 eq.next_check_at = datetime.now()
                 eq.status = STATUS_WAITING
+            try:
+                db.update_equipment(eq.id, monitoring_active=eq.monitoring_active)
+            except Exception:
+                pass
             return eq
 
     def list_equipments(self) -> list[Equipment]:

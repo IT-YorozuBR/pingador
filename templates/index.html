@@ -155,7 +155,6 @@
                     <button id="btn-layout-grid" class="btn btn-secondary btn-small active" type="button">Colunas</button>
                     <button id="btn-layout-list" class="btn btn-secondary btn-small" type="button">Lista</button>
                 </div>
-                <button id="btn-sync-excel" class="btn btn-secondary" type="button">Sincronizar planilha</button>
                 <button id="btn-open-modal" class="btn btn-primary">+ NOVO EQUIPAMENTO</button>
             </div>
         </section>
@@ -169,11 +168,13 @@
         PINGADOR v1.2.0 &nbsp;&bull;&nbsp; Monitoramento de disponibilidade por IP &nbsp;&bull;&nbsp; Todos os direitos reservados
     </footer>
 
-    <!-- Modal de cadastro -->
+    <!-- Modal de cadastro / edicao -->
     <div id="modal-overlay" class="modal-overlay hidden">
         <div class="modal">
-            <h2>Novo equipamento</h2>
+            <h2 id="modal-title">Novo equipamento</h2>
             <form id="form-equipment">
+                <input type="hidden" id="input-id">
+
                 <label for="input-name">Nome</label>
                 <input type="text" id="input-name" name="name" placeholder="Ex: Zabbix" required>
 
@@ -183,6 +184,10 @@
                 <label for="input-description">Descricao</label>
                 <input type="text" id="input-description" name="description" placeholder="Ex: Servidor de monitoramento">
 
+                <label for="input-category">Categoria</label>
+                <input type="text" id="input-category" name="category" placeholder="Ex: Servidores" list="category-options">
+                <datalist id="category-options"></datalist>
+
                 <label for="input-frequency">Frequencia de verificacao (segundos)</label>
                 <input type="number" id="input-frequency" name="frequency" min="1" value="30" required>
 
@@ -190,7 +195,7 @@
 
                 <div class="modal-actions">
                     <button type="button" id="btn-cancel" class="btn btn-secondary">Cancelar</button>
-                    <button type="submit" class="btn btn-primary">Cadastrar</button>
+                    <button type="submit" id="btn-submit-equipment" class="btn btn-primary">Cadastrar</button>
                 </div>
             </form>
         </div>

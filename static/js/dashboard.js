@@ -373,6 +373,7 @@ function renderEquipments(allEquipments, historyByEquipment) {
                 </div>
                 <div class="equipment-actions">
                     <button class="btn btn-secondary btn-small" onclick="toggleEquipment(${eq.id})" id="equipment-toggle-${eq.id}"></button>
+                    <button class="btn btn-secondary btn-small" onclick="editEquipment(${eq.id})">Editar</button>
                     <button class="btn btn-danger btn-small" onclick="removeEquipment(${eq.id})">Remover</button>
                 </div>`;
             card.addEventListener("click", (evt) => {
@@ -642,15 +643,43 @@ async function removeEquipment(id) {
     refreshData();
 }
 
-// ---------------- Modal de cadastro ----------------
+function editEquipment(id) {
+    const eq = latestAllEquipments.find((e) => e.id === id);
+    if (!eq) return;
+    formError.classList.add("hidden");
+    formEquipment.reset();
+    document.getElementById("input-id").value = eq.id;
+    document.getElementById("input-name").value = eq.name || "";
+    document.getElementById("input-ip").value = eq.ip || "";
+    document.getElementById("input-description").value = eq.description || "";
+    document.getElementById("input-category").value = eq.category || "";
+    document.getElementById("input-frequency").value = eq.frequency || 30;
+    document.getElementById("modal-title").textContent = "Editar equipamento";
+    document.getElementById("btn-submit-equipment").textContent = "Salvar";
+    fillCategoryOptions();
+    modalOverlay.classList.remove("hidden");
+}
+
+// ---------------- Modal de cadastro / edicao ----------------
 
 const modalOverlay = document.getElementById("modal-overlay");
 const formEquipment = document.getElementById("form-equipment");
 const formError = document.getElementById("form-error");
 
+function fillCategoryOptions() {
+    const datalist = document.getElementById("category-options");
+    if (!datalist) return;
+    const cats = [...new Set(latestAllEquipments.map((e) => e.category).filter(Boolean))].sort();
+    datalist.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}"></option>`).join("");
+}
+
 document.getElementById("btn-open-modal").addEventListener("click", () => {
     formError.classList.add("hidden");
     formEquipment.reset();
+    document.getElementById("input-id").value = "";
+    document.getElementById("modal-title").textContent = "Novo equipamento";
+    document.getElementById("btn-submit-equipment").textContent = "Cadastrar";
+    fillCategoryOptions();
     modalOverlay.classList.remove("hidden");
 });
 
@@ -664,22 +693,25 @@ modalOverlay.addEventListener("click", (evt) => {
 
 formEquipment.addEventListener("submit", async (evt) => {
     evt.preventDefault();
+    const id = document.getElementById("input-id").value;
     const payload = {
         name: document.getElementById("input-name").value,
         ip: document.getElementById("input-ip").value,
         description: document.getElementById("input-description").value,
+        category: document.getElementById("input-category").value,
         frequency: document.getElementById("input-frequency").value,
     };
 
-    const res = await fetch("/api/equipments", {
-        method: "POST",
+    const res = await fetch(id ? `/api/equipments/${id}` : "/api/equipments", {
+        method: id ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
         const data = await res.json();
-        formError.textContent = data.error || "Erro ao cadastrar equipamento.";
+        formError.textContent =
+            data.error || (id ? "Erro ao salvar equipamento." : "Erro ao cadastrar equipamento.");
         formError.classList.remove("hidden");
         return;
     }
@@ -703,33 +735,6 @@ document.getElementById("filter-status").addEventListener("change", (evt) => {
 document.getElementById("filter-search").addEventListener("input", (evt) => {
     searchQuery = evt.target.value;
     renderEquipments(latestAllEquipments, latestHistoryByEquipment);
-});
-
-// ---------------- Sincronizacao manual da planilha ----------------
-
-document.getElementById("btn-sync-excel").addEventListener("click", async () => {
-    const btn = document.getElementById("btn-sync-excel");
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "Sincronizando...";
-    try {
-        const res = await fetch("/api/excel-sync", { method: "POST" });
-        const data = await res.json();
-        if (!res.ok) {
-            alert(data.error || "Falha ao sincronizar a planilha.");
-        } else {
-            alert(
-                `Planilha sincronizada: ${data.added} adicionado(s), ` +
-                `${data.updated} atualizado(s), ${data.removed} removido(s).`
-            );
-            refreshData();
-        }
-    } catch (err) {
-        alert("Falha ao sincronizar a planilha.");
-    } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
-    }
 });
 
 // ---------------- Inicializacao ----------------

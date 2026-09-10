@@ -22,9 +22,11 @@ RUN useradd --system --no-create-home --uid 10001 pingador \
     && chown -R pingador:pingador /app
 USER pingador
 
+# PINGADOR_DB_PATH aponta para o diretorio montado como volume no compose
+# (/app/data/db), para o banco - agora tambem com o cadastro dos
+# equipamentos - sobreviver a recriacao do container mesmo em `docker run`.
 ENV PINGADOR_PORT=8000 \
-    PINGADOR_EXCEL_PATH="/app/data/Inventario IP.xlsx" \
-    PINGADOR_DB_PATH="/app/data/pingador.db" \
+    PINGADOR_DB_PATH="/app/data/db/pingador.db" \
     TZ=America/Sao_Paulo \
     PYTHONUNBUFFERED=1
 
@@ -34,8 +36,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/dashboard', timeout=4)" || exit 1
 
-# O estado "ao vivo" (equipamentos/eventos) vive em memoria, entao um unico
-# worker; o historico de disponibilidade e persistido em SQLite (db.py, em
-# /app/data, montado como volume no compose). Threads a mais permitem
-# atender requisicoes HTTP enquanto os pings rodam em background (monitor.py).
+# O estado "ao vivo" (status/tempo de resposta) e o working-set em memoria,
+# entao um unico worker; o cadastro dos equipamentos e todo o historico sao
+# persistidos em SQLite (db.py, em /app/data/db, montado como volume no
+# compose). Threads a mais permitem atender requisicoes HTTP enquanto os
+# pings rodam em background (monitor.py).
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "4", "--timeout", "60", "app:app"]

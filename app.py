@@ -1,24 +1,25 @@
 """
 Pingador - MVP de monitoramento de equipamentos por IP.
 
-Aplicacao Flask simples, dados em memoria (ver storage.py), com
-monitoramento automatico rodando em background (ver monitor.py).
+Aplicacao Flask simples. Os equipamentos e o historico ficam em SQLite
+(ver db.py); storage.py mantem um working-set em memoria carregado no
+boot. Monitoramento automatico roda em background (ver monitor.py).
 """
 from flask import Flask, jsonify, render_template, request
 
 import db
-from excel_sync import EXCEL_PATH, start_excel_watcher, sync_now
 from models import STATUS_ONLINE, STATUS_OFFLINE
 from monitor import start_scheduler
 from storage import store, ValidationError
 
 app = Flask(__name__)
 
-# Inicia o monitoramento em background e o watcher da planilha assim que o
-# modulo e carregado (tanto em `python app.py` quanto sob um servidor WSGI
-# como o gunicorn, que importa o modulo sem passar pelo bloco __main__).
+# Carrega os equipamentos persistidos (tabela `equipment` no SQLite) e inicia
+# o monitoramento em background assim que o modulo e carregado (tanto em
+# `python app.py` quanto sob um servidor WSGI como o gunicorn, que importa o
+# modulo sem passar pelo bloco __main__).
+store.load()
 start_scheduler()
-start_excel_watcher()
 
 
 @app.route("/")
@@ -79,6 +80,25 @@ def create_equipment():
     return jsonify(eq.to_dict()), 201
 
 
+@app.route("/api/equipments/<int:equipment_id>", methods=["PUT"])
+def update_equipment(equipment_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        eq = store.update_equipment(
+            equipment_id,
+            ip=payload.get("ip"),
+            name=payload.get("name"),
+            description=payload.get("description"),
+            frequency=payload.get("frequency"),
+            category=payload.get("category"),
+        )
+    except ValidationError as e:
+        return jsonify({"error": str(e)}), 400
+    if not eq:
+        return jsonify({"error": "Equipamento nao encontrado."}), 404
+    return jsonify(eq.to_dict())
+
+
 @app.route("/api/equipments/<int:equipment_id>", methods=["DELETE"])
 def delete_equipment(equipment_id):
     ok = store.remove_equipment(equipment_id)
@@ -110,19 +130,6 @@ def ping_history():
     """Historico curto de amostras de ping por equipamento (monitor de pulso)."""
     equipment_id = request.args.get("equipment_id", type=int)
     return jsonify(store.get_ping_history(equipment_id=equipment_id))
-
-
-# ---------------- API: sincronizacao com a planilha de inventario ----------------
-
-@app.route("/api/excel-sync", methods=["POST"])
-def excel_sync_now():
-    try:
-        result = sync_now()
-    except FileNotFoundError:
-        return jsonify({"error": f"Arquivo nao encontrado: {EXCEL_PATH}"}), 404
-    except Exception as e:
-        return jsonify({"error": f"Falha ao ler a planilha: {e}"}), 400
-    return jsonify(result)
 
 
 # ---------------- API: disponibilidade (SQLite) ----------------

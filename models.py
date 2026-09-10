@@ -8,15 +8,9 @@ representacao dos registros e trocar a camada de persistencia em storage.py.
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-import itertools
 
-# Gerador de IDs sequenciais simples (equivalente a um AUTO_INCREMENT)
-_id_counter = itertools.count(1)
-
-
-def next_id() -> int:
-    return next(_id_counter)
-
+# O id do equipamento agora e atribuido pelo SQLite (tabela `equipment`,
+# ver db.py). O `store` em memoria apenas carrega essas linhas no boot.
 
 # Status possiveis de um equipamento
 STATUS_WAITING = "aguardando"

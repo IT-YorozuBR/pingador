@@ -9,17 +9,16 @@ services:
       - default
       - npm_network
     volumes:
-      # Planilha de inventario "de verdade" na VM, montada no caminho que o
-      # container le/observa (ver PINGADOR_EXCEL_PATH no Dockerfile).
-      - "./Inventario IP.xlsx:/app/data/Inventario IP.xlsx"
-      # Banco SQLite com o historico de disponibilidade / ultima vez online.
-      # Volume nomeado para o historico sobreviver a recriacao do container.
+      # Banco SQLite: cadastro dos equipamentos + historico de disponibilidade.
+      # Volume nomeado para sobreviver a recriacao do container.
       - "pingador_db:/app/data/db"
+      # Import unico da planilha (rodar uma vez):
+      #   docker compose run --rm \
+      #     -v "$PWD/Inventario IP.xlsx:/app/data/Inventario IP.xlsx" \
+      #     pingador python import_inventory.py
     environment:
       # Fuso do container: sem isso os horarios ficam em UTC (3h a frente).
       - TZ=America/Sao_Paulo
-      - PINGADOR_EXCEL_SYNC_INTERVAL=60
-      - PINGADOR_EXCEL_DEFAULT_FREQUENCY=15
       - PINGADOR_DB_PATH=/app/data/db/pingador.db
       - PINGADOR_DB_RETENTION_DAYS=30
     # Descomente para pingar equipamentos na mesma rede da VM sem NAT

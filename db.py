@@ -41,6 +41,10 @@ _conn: Optional[sqlite3.Connection] = None
 _writes_since_prune = 0
 
 
+class EquipmentIPConflict(Exception):
+    """IP ja cadastrado na tabela equipment."""
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -119,6 +123,25 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_topo_conn_src ON topology_connections (source_ip);
             CREATE INDEX IF NOT EXISTS idx_topo_conn_tgt ON topology_connections (target_ip);
+
+            -- Cadastro dos equipamentos monitorados. Antes vivia so em RAM
+            -- (storage.py) e era reconstruido da planilha a cada restart;
+            -- agora e a fonte duravel. O `store` em memoria e apenas um
+            -- working-set carregado desta tabela no boot.
+            CREATE TABLE IF NOT EXISTS equipment (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip                TEXT NOT NULL UNIQUE,
+                name              TEXT NOT NULL,
+                description       TEXT DEFAULT '',
+                frequency         INTEGER NOT NULL DEFAULT 15,
+                category          TEXT DEFAULT 'Manual',
+                source            TEXT NOT NULL DEFAULT 'manual',  -- origem: 'manual' | 'excel' (informativo)
+                monitoring_active INTEGER NOT NULL DEFAULT 1,
+                created_at        TEXT,
+                updated_at        TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_equipment_source ON equipment (source);
             """
         )
         _conn.commit()
@@ -227,6 +250,191 @@ def forget_equipment(equipment_id: int) -> None:
             conn.commit()
         except sqlite3.Error:
             pass
+
+
+# --------------------------- cadastro de equipamentos ---------------------------
+
+# colunas que update_equipment aceita alterar
+_EQUIPMENT_UPDATABLE = (
+    "name", "description", "frequency", "category", "source", "monitoring_active",
+)
+
+
+def list_equipment() -> list[dict]:
+    """Todas as linhas de `equipment` (ordem de id). Hidrata o store no boot."""
+    conn = _require_conn()
+    with _lock:
+        rows = conn.execute("SELECT * FROM equipment ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_equipment_by_ip(ip: str) -> Optional[dict]:
+    conn = _require_conn()
+    with _lock:
+        row = conn.execute("SELECT * FROM equipment WHERE ip = ?", (ip,)).fetchone()
+    return dict(row) if row else None
+
+
+def insert_equipment(
+    *,
+    ip: str,
+    name: str,
+    description: str,
+    frequency: int,
+    category: str = "Manual",
+    source: str = "manual",
+    monitoring_active: bool = True,
+    equipment_id: Optional[int] = None,
+) -> int:
+    """
+    Insere um equipamento e devolve o id (o passado em `equipment_id`, quando
+    houver - usado pelo import para adotar o id historico -, senao o
+    AUTOINCREMENT).
+
+    Escrita CRITICA: IP duplicado vira EquipmentIPConflict; qualquer outro
+    erro de sqlite e propagado (uma persistencia que falha nao pode parecer
+    ter dado certo).
+    """
+    now_iso = datetime.now().isoformat()
+    conn = _require_conn()
+    with _lock:
+        try:
+            if equipment_id is not None:
+                cur = conn.execute(
+                    "INSERT INTO equipment (id, ip, name, description, frequency, "
+                    "category, source, monitoring_active, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        equipment_id, ip, name, description or "", int(frequency),
+                        category or "Manual", source or "manual",
+                        1 if monitoring_active else 0, now_iso, now_iso,
+                    ),
+                )
+            else:
+                cur = conn.execute(
+                    "INSERT INTO equipment (ip, name, description, frequency, "
+                    "category, source, monitoring_active, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ip, name, description or "", int(frequency),
+                        category or "Manual", source or "manual",
+                        1 if monitoring_active else 0, now_iso, now_iso,
+                    ),
+                )
+            conn.commit()
+            return int(equipment_id if equipment_id is not None else cur.lastrowid)
+        except sqlite3.IntegrityError:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise EquipmentIPConflict(ip)
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
+
+
+def update_equipment(equipment_id: int, **fields) -> None:
+    """
+    UPDATE parcial de `equipment` (whitelist em _EQUIPMENT_UPDATABLE); sempre
+    seta updated_at. Best-effort: erros de I/O sao engolidos, exceto conflito
+    de IP unico (EquipmentIPConflict), util para a tela de edicao.
+    """
+    cols = [c for c in fields if c in _EQUIPMENT_UPDATABLE]
+    has_ip = "ip" in fields  # ip tem constraint UNIQUE, tratado a parte
+    if not cols and not has_ip:
+        return
+
+    sets = []
+    params: list = []
+    if has_ip:
+        sets.append("ip = ?")
+        params.append(fields["ip"])
+    for c in cols:
+        val = fields[c]
+        if c == "monitoring_active":
+            val = 1 if val else 0
+        elif c == "frequency":
+            val = int(val)
+        sets.append(f"{c} = ?")
+        params.append(val)
+    sets.append("updated_at = ?")
+    params.append(datetime.now().isoformat())
+    params.append(equipment_id)
+
+    conn = _require_conn()
+    with _lock:
+        try:
+            conn.execute(
+                f"UPDATE equipment SET {', '.join(sets)} WHERE id = ?", params
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise EquipmentIPConflict(fields.get("ip"))
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+
+
+def delete_equipment_row(equipment_id: int) -> None:
+    """DELETE FROM equipment WHERE id = ?. Best-effort."""
+    conn = _require_conn()
+    with _lock:
+        try:
+            conn.execute("DELETE FROM equipment WHERE id = ?", (equipment_id,))
+            conn.commit()
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+
+
+def rekey_device_layout(old_ip: str, new_ip: str) -> None:
+    """
+    Move a posicao salva do no na topologia quando o IP de um equipamento
+    muda na edicao. Best-effort; se new_ip ja tiver posicao, mantem a dela.
+    """
+    if not old_ip or not new_ip or old_ip == new_ip:
+        return
+    conn = _require_conn()
+    with _lock:
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM device_layout WHERE ip = ? LIMIT 1", (new_ip,)
+            ).fetchone()
+            if exists:
+                conn.execute("DELETE FROM device_layout WHERE ip = ?", (old_ip,))
+            else:
+                conn.execute(
+                    "UPDATE device_layout SET ip = ? WHERE ip = ?", (new_ip, old_ip)
+                )
+            conn.commit()
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+
+
+def down_counts_by_ip() -> dict:
+    """{ip: nº de eventos 'down'} - para semear down_count no boot."""
+    conn = _require_conn()
+    with _lock:
+        rows = conn.execute(
+            "SELECT ip, COUNT(*) AS c FROM events WHERE kind = 'down' "
+            "AND ip IS NOT NULL GROUP BY ip"
+        ).fetchall()
+    return {r["ip"]: r["c"] for r in rows}
 
 
 # --------------------------- eventos / linha do tempo ---------------------------

@@ -1,42 +1,36 @@
 """
-Sincronizacao do inventario de IPs a partir da planilha Excel.
+Import unico da planilha de inventario para a tabela `equipment` do SQLite.
 
-Le periodicamente o arquivo de inventario (uma aba por categoria/base de
-equipamentos: Servidores, Access Points, Cameras, Impressoras, etc.) e
-mantem os equipamentos cadastrados no sistema em sincronia:
+Rode UMA vez, antes de subir a versao que nao usa mais Excel:
 
-- Adiciona os IPs novos encontrados em qualquer aba.
-- Atualiza nome/descricao/categoria quando mudam na planilha.
-- Remove os equipamentos que somem da planilha.
+    python import_inventory.py                 # local (venv com openpyxl)
+    docker compose run --rm pingador python import_inventory.py
 
-Equipamentos cadastrados manualmente pela tela (source="manual") nunca sao
-tocados por essa sincronizacao, mesmo que o mesmo IP exista na planilha.
+A partir dai o app usa apenas o banco (ver db.py / storage.py). Este script
+e independente do resto do codigo (traz sua propria leitura de planilha) e
+pode ser apagado depois do import.
 
-As abas "Geral" e "Pesquisa" sao ignoradas: sao visoes de apoio (mapeamento
-para listas suspensas / busca), nao uma lista real de equipamentos por
-categoria.
+Idempotente: rodar de novo nao duplica (IPs ja presentes sao ignorados).
+
+Preserva o historico: quando o IP ja tem snapshot em `equipment_state`, o
+equipamento e inserido com o MESMO id, mantendo `ping_samples` / `events` /
+`equipment_state` ligados.
 """
 import ipaddress
 import os
-import threading
+import sys
 import unicodedata
 
 import openpyxl
 
-from storage import store
+import db
 
 EXCEL_PATH = os.environ.get(
     "PINGADOR_EXCEL_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "Inventario IP.xlsx"),
 )
-SYNC_INTERVAL_SECONDS = int(os.environ.get("PINGADOR_EXCEL_SYNC_INTERVAL", "60"))
 DEFAULT_FREQUENCY = int(os.environ.get("PINGADOR_EXCEL_DEFAULT_FREQUENCY", "15"))
-
 IGNORED_SHEETS = {"geral", "pesquisa"}
-
-_stop_event = threading.Event()
-_watcher_thread = None
-_last_mtime = None
 
 
 def _normalize(text) -> str:
@@ -72,11 +66,7 @@ def _cell(row, columns, name):
 
 
 def read_inventory(path: str = None) -> list[dict]:
-    """
-    Le a planilha e retorna uma lista de equipamentos, um por IP.
-    Em caso de IP duplicado entre abas, a primeira aba em que ele aparece
-    prevalece (as abas sao lidas na ordem em que aparecem no arquivo).
-    """
+    """Le a planilha e retorna uma lista de equipamentos, um por IP."""
     path = path or EXCEL_PATH
     entries_by_ip = {}
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
@@ -131,31 +121,63 @@ def read_inventory(path: str = None) -> list[dict]:
     return list(entries_by_ip.values())
 
 
-def sync_now(path: str = None) -> dict:
-    entries = read_inventory(path)
-    return store.sync_from_excel(entries)
+def main() -> int:
+    if not os.path.exists(EXCEL_PATH):
+        print(f"Planilha nao encontrada: {EXCEL_PATH}", file=sys.stderr)
+        return 1
 
+    entries = read_inventory()
+    existing_ips = {e["ip"] for e in db.list_equipment()}
+    state_by_ip = {}
+    for s in db.list_states():
+        ip = s.get("ip")
+        if ip and ip not in state_by_ip:
+            state_by_ip[ip] = s
 
-def _watch_loop():
-    global _last_mtime
-    while not _stop_event.is_set():
+    imported = adopted = skipped = 0
+    for entry in entries:
+        ip = entry["ip"]
+        if ip in existing_ips:
+            skipped += 1
+            continue
+        adopt_id = None
+        st = state_by_ip.get(ip)
+        if st and st.get("equipment_id") is not None:
+            adopt_id = int(st["equipment_id"])
         try:
-            mtime = os.path.getmtime(EXCEL_PATH)
-            if mtime != _last_mtime:
-                _last_mtime = mtime
-                sync_now()
-        except OSError:
-            pass  # arquivo ausente/indisponivel momentaneamente
-        _stop_event.wait(SYNC_INTERVAL_SECONDS)
+            db.insert_equipment(
+                ip=ip,
+                name=entry["name"],
+                description=entry["description"],
+                frequency=entry["frequency"],
+                category=entry["category"],
+                source="excel",
+                monitoring_active=True,
+                equipment_id=adopt_id,
+            )
+        except db.EquipmentIPConflict:
+            # id historico ja ocupado por outro IP: cai no AUTOINCREMENT
+            db.insert_equipment(
+                ip=ip,
+                name=entry["name"],
+                description=entry["description"],
+                frequency=entry["frequency"],
+                category=entry["category"],
+                source="excel",
+                monitoring_active=True,
+            )
+            adopt_id = None
+        imported += 1
+        if adopt_id is not None:
+            adopted += 1
+
+    print(
+        f"Planilha: {len(entries)} IPs. "
+        f"Importados: {imported} (adotaram id historico: {adopted}). "
+        f"Ja existiam: {skipped}."
+    )
+    return 0
 
 
-def start_excel_watcher():
-    global _watcher_thread
-    if _watcher_thread is None or not _watcher_thread.is_alive():
-        _stop_event.clear()
-        _watcher_thread = threading.Thread(target=_watch_loop, daemon=True)
-        _watcher_thread.start()
-
-
-def stop_excel_watcher():
-    _stop_event.set()
+if __name__ == "__main__":
+    sys.exit(main())

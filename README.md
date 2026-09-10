@@ -111,14 +111,13 @@ exibidos no proprio formulario, sem quebrar a aplicacao.
 pingador/
 ├── app.py             # rotas Flask (paginas + API JSON)
 ├── models.py           # dataclasses Equipment e Event
-├── storage.py           # "banco" em memoria (dicts/listas) + regras de negocio
-├── db.py                 # persistencia SQLite: historico de pings + disponibilidade
+├── storage.py           # working-set em memoria (carregado do SQLite no boot) + regras de negocio
+├── db.py                 # persistencia SQLite: cadastro de equipamentos + historico + disponibilidade
 ├── monitor.py            # scheduler em background + funcao de ping cross-platform
-├── excel_sync.py          # leitura e sincronizacao periodica da planilha de inventario
-├── Inventario IP.xlsx      # planilha de inventario (uma aba por base/categoria)
+├── import_inventory.py    # import unico da planilha de inventario para o SQLite (rodar uma vez)
 ├── requirements.txt
 ├── templates/
-│   ├── index.html         # dashboard + lista + modal de cadastro
+│   ├── index.html         # dashboard + lista + modal de cadastro/edicao
 │   └── timeline.html        # pagina dedicada da linha do tempo de eventos
 ├── static/
 │   ├── css/style.css
@@ -130,12 +129,16 @@ pingador/
 
 ## Limitacoes do MVP
 
-- **Persistencia parcial**: o cadastro de equipamentos e os eventos de
-  queda/recuperacao ainda vivem em RAM (recriados pela planilha ao subir).
-  O historico de verificacoes e a "ultima vez online" ficam em SQLite
-  (`pingador.db`, configuravel por `PINGADOR_DB_PATH`; no Docker vai para o
-  volume `pingador_db`). Amostras mais antigas que `PINGADOR_DB_RETENTION_DAYS`
-  (padrao 30) sao descartadas automaticamente.
+- **Persistencia**: o cadastro dos equipamentos (incluindo pausa/edicao) e
+  todo o historico ficam em SQLite (`pingador.db`, configuravel por
+  `PINGADOR_DB_PATH`; no Docker vai para o volume `pingador_db`). No boot,
+  `storage.py` carrega os equipamentos da tabela `equipment`. So o estado
+  "ao vivo" (status atual, tempo de resposta) e reconstruido apos o
+  primeiro ciclo de verificacao. Amostras de ping mais antigas que
+  `PINGADOR_DB_RETENTION_DAYS` (padrao 30) sao descartadas automaticamente.
+- **Migracao da planilha**: o inventario em Excel foi substituido pelo
+  banco. Rode `python import_inventory.py` uma vez para importar a planilha
+  atual (`Inventario IP.xlsx`); depois disso o cadastro e feito pela tela.
 - **Sem autenticacao**: qualquer pessoa com acesso a URL pode
   cadastrar/remover equipamentos.
 - **Sem alertas**: o sistema apenas registra e mostra quedas, nao envia
@@ -152,12 +155,12 @@ pingador/
 
 O codigo ja foi organizado pensando nessa evolucao:
 
-- `storage.py` concentra toda a logica de leitura/escrita de dados atras
-  de uma unica instancia (`store`). Para trocar por banco de dados, basta
-  reimplementar essa classe (por exemplo `SQLiteStore`/`PostgresStore`)
-  mantendo os mesmos metodos (`add_equipment`, `list_equipments`,
-  `register_ping_result`, `list_events`, etc.) — as rotas em `app.py` nao
-  precisam mudar.
+- `storage.py` concentra toda a logica de leitura/escrita atras de uma
+  unica instancia (`store`). Hoje ele ja e write-through para o SQLite
+  (`db.py`) no cadastro/edicao/exclusao/pausa e carrega os equipamentos do
+  banco no boot (`store.load()`); o `dict` em memoria e so um working-set
+  para o loop do monitor. Um proximo passo seria persistir tambem o estado
+  "ao vivo" ou trocar por PostgreSQL — as rotas em `app.py` nao mudam.
 - `models.py` ja usa dataclasses com `to_dict()`, faceis de mapear para
   um ORM (SQLAlchemy) ou para linhas de tabela.
 
