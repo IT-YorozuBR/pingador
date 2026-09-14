@@ -49,7 +49,6 @@ def list_equipments():
     data = []
     for eq in equipments:
         d = eq.to_dict()
-        d["events_count"] = len(store.list_events(eq.id, limit=10_000))
         # snapshot persistido (sobrevive a reinicializacao)
         st = states.get(eq.id, {})
         d["last_success_at"] = st.get("last_success_at")

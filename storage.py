@@ -19,6 +19,14 @@ from models import Equipment, Event, STATUS_WAITING, STATUS_ONLINE, STATUS_OFFLI
 # estilo "monitor cardiaco")
 PING_HISTORY_MAXLEN = 40
 
+# quantidade maxima de eventos (queda/recuperacao/cadastro/remocao)
+# mantidos em memoria para a tela ao vivo. O historico completo continua
+# em SQLite (ver db.query_events, usado pela pagina de linha do tempo);
+# isto e so o "cache" recente consultado a cada poll do dashboard, entao
+# nao pode crescer sem limite (um incidente longo gera milhares de
+# transicoes de queda/recuperacao).
+MAX_INMEMORY_EVENTS = 5000
+
 # quantidade de falhas de ping consecutivas exigidas antes de declarar
 # o equipamento como offline (evita falso-positivo por perda isolada de
 # pacote ICMP)
@@ -44,11 +52,14 @@ class InMemoryStore:
         self._lock = threading.RLock()
         self._loaded = False
         self.equipments: dict[int, Equipment] = {}
-        self.events: list[Event] = []
+        self.events: deque[Event] = deque(maxlen=MAX_INMEMORY_EVENTS)
         # historico curto de amostras de ping por equipamento, usado no
         # grafico "monitor de pulso" (nao confundir com self.events, que
         # guarda apenas as transicoes de queda/recuperacao)
         self.ping_history: dict[int, deque] = {}
+        # evento de queda ainda aberto (sem up_at) por equipamento, para
+        # nao precisar varrer self.events inteiro a cada recuperacao
+        self._open_down_event: dict[int, Event] = {}
 
     # ---------- Equipamentos ----------
 
@@ -207,7 +218,11 @@ class InMemoryStore:
             if equipment_id in self.equipments:
                 gone = self.equipments.pop(equipment_id)
                 self.ping_history.pop(equipment_id, None)
-                self.events = [e for e in self.events if e.equipment_id != equipment_id]
+                self._open_down_event.pop(equipment_id, None)
+                self.events = deque(
+                    (e for e in self.events if e.equipment_id != equipment_id),
+                    maxlen=MAX_INMEMORY_EVENTS,
+                )
                 try:
                     db.record_event(
                         equipment_id, gone.name, gone.ip, "removed",
@@ -279,17 +294,17 @@ class InMemoryStore:
             if new_status == STATUS_OFFLINE and previous_status != STATUS_OFFLINE:
                 eq.down_count += 1
                 eq.last_down_at = now
-                self.events.append(
-                    Event(
-                        id=_next_event_id(),
-                        equipment_id=equipment_id,
-                        previous_status=previous_status,
-                        current_status=new_status,
-                        response_time_ms=response_time_ms,
-                        down_at=now,
-                        timestamp=now,
-                    )
+                down_event = Event(
+                    id=_next_event_id(),
+                    equipment_id=equipment_id,
+                    previous_status=previous_status,
+                    current_status=new_status,
+                    response_time_ms=response_time_ms,
+                    down_at=now,
+                    timestamp=now,
                 )
+                self.events.append(down_event)
+                self._open_down_event[equipment_id] = down_event
                 try:
                     db.record_event(
                         equipment_id, eq.name, eq.ip, "down", category=eq.category,
@@ -303,13 +318,14 @@ class InMemoryStore:
             elif new_status == STATUS_ONLINE and previous_status == STATUS_OFFLINE:
                 eq.last_up_at = now
                 downtime_seconds = None
-                # encontra o ultimo evento de queda ainda aberto (sem up_at)
-                for event in reversed(self.events):
-                    if event.equipment_id == equipment_id and event.up_at is None:
-                        event.up_at = now
-                        event.duration_seconds = (now - event.down_at).total_seconds()
-                        downtime_seconds = event.duration_seconds
-                        break
+                # evento de queda ainda aberto (sem up_at), se ainda estiver
+                # no cache em memoria (pode ter sido descartado pelo limite
+                # de MAX_INMEMORY_EVENTS num incidente muito longo)
+                open_event = self._open_down_event.pop(equipment_id, None)
+                if open_event is not None and open_event.up_at is None:
+                    open_event.up_at = now
+                    open_event.duration_seconds = (now - open_event.down_at).total_seconds()
+                    downtime_seconds = open_event.duration_seconds
                 self.events.append(
                     Event(
                         id=_next_event_id(),
