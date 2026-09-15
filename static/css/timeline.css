@@ -1359,6 +1359,19 @@ select.tl-input { cursor: pointer; }
     .tl-node.unrecovered .tl-node-core { box-shadow: 0 0 12px var(--tl-red), 0 0 20px rgba(255, 77, 94, 0.5); }
 }
 
+/* Modo desempenho: mesmas reducoes do prefers-reduced-motion, mas ligado
+   manualmente (ou automaticamente quando ha muitos marcadores na tela) -
+   os aneis pulsantes e o glow (box-shadow com blur) de cada evento sao o
+   que mais pesa quando existem muitas quedas simultaneas na linha do tempo. */
+body.tl-perf-mode .tl-scan, body.tl-perf-mode .tl-node-ring, body.tl-perf-mode .tl-outage::after, body.tl-perf-mode .tl-nowline,
+body.tl-perf-mode .tl-foot-live::before, body.tl-perf-mode .tl-title-icon,
+body.tl-perf-mode .tl-node.unrecovered .tl-node-core, body.tl-perf-mode .tl-focus-path, body.tl-perf-mode .tl-focus-path.ongoing,
+body.tl-perf-mode .tl-equip-track polyline { animation: none; }
+body.tl-perf-mode .tl-focus-path { transition: none !important; }
+body.tl-perf-mode .tl-node { transition: opacity 0.2s ease; transform: translate(-50%, -50%) scale(1); }
+body.tl-perf-mode .tl-node.unrecovered .tl-node-core { box-shadow: 0 0 12px var(--tl-red), 0 0 20px rgba(255, 77, 94, 0.5); }
+body.tl-perf-mode .tl-node-core, body.tl-perf-mode .tl-cluster .tl-node-core { box-shadow: none !important; }
+
 @media (max-width: 820px) {
     .tl-filters { margin-left: 0; }
     .tl-title p { display: none; }

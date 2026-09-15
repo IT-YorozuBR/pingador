@@ -48,7 +48,14 @@ const state = {
     focusEquipmentId: null,   // equipamento em foco na linha do tempo
     focusEquipmentName: "",
     cluster: true,            // agrupar marcadores quando muito juntos (zoom out)
+    perfMode: false,          // desliga aneis/brilhos pulsantes (custa caro com muitas quedas)
 };
+
+// limites (em marcadores visiveis simultaneamente) para ligar/desligar o modo
+// desempenho automaticamente, com histerese pra nao ficar piscando o estado
+const PERF_MODE_ON_THRESHOLD = 70;
+const PERF_MODE_OFF_THRESHOLD = 40;
+let perfModeManual = false; // true assim que o usuario mexe no checkbox -> para de decidir sozinho
 
 const stage = document.getElementById("tl-stage");
 const nodesLayer = document.getElementById("tl-nodes");
@@ -143,6 +150,42 @@ function xOf(ms) {
 
 // ------------------------- layout / render -------------------------
 
+const perfModeToggle = document.getElementById("tl-perf-mode");
+
+function applyPerfMode(on) {
+    state.perfMode = on;
+    document.body.classList.toggle("tl-perf-mode", on);
+    if (perfModeToggle) perfModeToggle.checked = on;
+}
+
+try {
+    if (localStorage.getItem("tlPerfMode") === "1") {
+        perfModeManual = true;
+        applyPerfMode(true);
+    }
+} catch (err) { /* localStorage indisponivel (modo privado etc.) - ignora */ }
+
+if (perfModeToggle) {
+    perfModeToggle.addEventListener("change", (e) => {
+        perfModeManual = true;
+        applyPerfMode(e.target.checked);
+        try { localStorage.setItem("tlPerfMode", e.target.checked ? "1" : "0"); } catch (err) {}
+    });
+}
+
+// com muitos equipamentos caindo ao mesmo tempo, cada marcador tem um anel
+// pulsante + glow (box-shadow com blur) animando pra sempre - isso pesa
+// bastante pra pintar. se o usuario nao escolheu manualmente, liga o modo
+// desempenho sozinho quando a tela fica cheia de marcadores.
+function maybeAutoPerfMode(visibleAnimatedCount) {
+    if (perfModeManual) return;
+    if (!state.perfMode && visibleAnimatedCount >= PERF_MODE_ON_THRESHOLD) {
+        applyPerfMode(true);
+    } else if (state.perfMode && visibleAnimatedCount <= PERF_MODE_OFF_THRESHOLD) {
+        applyPerfMode(false);
+    }
+}
+
 function scheduleLayout() {
     if (layoutQueued) return;
     layoutQueued = true;
@@ -214,6 +257,8 @@ function layout() {
     } else {
         for (const item of inView) singles.push(item);
     }
+
+    maybeAutoPerfMode(singles.length + groups.length);
 
     // 3) marcadores individuais
     for (const { ev, x } of singles) {
