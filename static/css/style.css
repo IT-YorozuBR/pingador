@@ -101,6 +101,20 @@ h1, h2, h3 {
     color: var(--text-muted);
 }
 
+.settings-pill {
+    background: transparent;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.settings-pill:hover {
+    border-color: var(--text-muted);
+}
+
+.settings-pill strong {
+    color: var(--text);
+}
+
 .dot {
     width: 8px;
     height: 8px;

@@ -65,6 +65,41 @@ function initEquipmentLayoutMode() {
     document.getElementById("btn-layout-list").addEventListener("click", () => applyEquipmentLayoutMode("list"));
 }
 
+// ---------------- Tempo para considerar offline (global) ----------------
+
+let offlineAfterSeconds = null;
+
+function renderOfflineAfter() {
+    document.getElementById("offline-after-label").textContent =
+        offlineAfterSeconds === null ? "--" : `${offlineAfterSeconds}s`;
+}
+
+async function initOfflineSetting() {
+    try {
+        const res = await fetch("/api/settings");
+        offlineAfterSeconds = (await res.json()).offline_after_seconds;
+        renderOfflineAfter();
+    } catch (e) { /* mantem "--" */ }
+
+    document.getElementById("btn-offline-setting").addEventListener("click", async () => {
+        const input = window.prompt(
+            "Quantos segundos de falha continua para considerar um equipamento OFFLINE?\n" +
+            "(vale para todos os equipamentos; 0 = imediato)",
+            offlineAfterSeconds ?? 30
+        );
+        if (input === null) return;
+        const res = await fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ offline_after_seconds: input.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) { window.alert(data.error || "Erro ao salvar."); return; }
+        offlineAfterSeconds = data.offline_after_seconds;
+        renderOfflineAfter();
+    });
+}
+
 let detailEquipmentId = null;
 let availabilityWindow = "24h";
 let availabilityChart = null;
@@ -740,6 +775,7 @@ document.getElementById("filter-search").addEventListener("input", (evt) => {
 // ---------------- Inicializacao ----------------
 
 initEquipmentLayoutMode();
+initOfflineSetting();
 initDetailModal();
 tickClock();
 setInterval(tickClock, 1000);

@@ -27,10 +27,38 @@ PING_HISTORY_MAXLEN = 40
 # transicoes de queda/recuperacao).
 MAX_INMEMORY_EVENTS = 5000
 
-# quantidade de falhas de ping consecutivas exigidas antes de declarar
+# tempo (segundos) de falhas de ping continuas exigido antes de declarar
 # o equipamento como offline (evita falso-positivo por perda isolada de
-# pacote ICMP)
-FAILURE_THRESHOLD = 3
+# pacote ICMP). Configuravel para todos pelo painel; persistido em SQLite.
+DEFAULT_OFFLINE_AFTER_SECONDS = 30
+MAX_OFFLINE_AFTER_SECONDS = 3600
+
+_offline_after_seconds = None
+
+
+def get_offline_after_seconds() -> int:
+    global _offline_after_seconds
+    if _offline_after_seconds is None:
+        try:
+            _offline_after_seconds = int(
+                db.get_setting("offline_after_seconds", str(DEFAULT_OFFLINE_AFTER_SECONDS))
+            )
+        except (TypeError, ValueError, Exception):
+            _offline_after_seconds = DEFAULT_OFFLINE_AFTER_SECONDS
+    return _offline_after_seconds
+
+
+def set_offline_after_seconds(value) -> int:
+    global _offline_after_seconds
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError("Informe um numero inteiro de segundos.")
+    if seconds < 0 or seconds > MAX_OFFLINE_AFTER_SECONDS:
+        raise ValidationError(f"O tempo deve estar entre 0 e {MAX_OFFLINE_AFTER_SECONDS} segundos.")
+    db.set_setting("offline_after_seconds", str(seconds))
+    _offline_after_seconds = seconds
+    return seconds
 
 _event_id_counter_lock = threading.Lock()
 _event_id = 0
@@ -276,13 +304,17 @@ class InMemoryStore:
 
             if success:
                 eq.consecutive_failures = 0
+                eq.first_failure_at = None
                 new_status = STATUS_ONLINE
             else:
                 eq.consecutive_failures += 1
-                # so confirma a queda apos N falhas seguidas; ate la,
-                # mantem o ultimo status conhecido (evita flapping por
-                # perda isolada de pacote ICMP)
-                if previous_status == STATUS_OFFLINE or eq.consecutive_failures >= FAILURE_THRESHOLD:
+                if eq.first_failure_at is None:
+                    eq.first_failure_at = now
+                # so confirma a queda apos X segundos de falhas continuas;
+                # ate la, mantem o ultimo status conhecido (evita flapping
+                # por perda isolada de pacote ICMP)
+                failing_for = (now - eq.first_failure_at).total_seconds()
+                if previous_status == STATUS_OFFLINE or failing_for >= get_offline_after_seconds():
                     new_status = STATUS_OFFLINE
                 else:
                     new_status = previous_status

@@ -142,6 +142,12 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_equipment_source ON equipment (source);
+
+            -- Configuracoes globais (chave/valor), ex.: tempo para considerar offline.
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
             """
         )
         _conn.commit()
@@ -582,6 +588,24 @@ def _window_start_iso(window: str) -> Optional[str]:
     }
     delta = mapping.get(window, timedelta(hours=24))
     return (datetime.now() - delta).isoformat()
+
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    conn = _require_conn()
+    with _lock:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = _require_conn()
+    with _lock:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+        conn.commit()
 
 
 def get_state(equipment_id: int) -> Optional[dict]:

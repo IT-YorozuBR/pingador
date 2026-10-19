@@ -10,7 +10,9 @@ from flask import Flask, jsonify, render_template, request
 import db
 from models import STATUS_ONLINE, STATUS_OFFLINE
 from monitor import start_scheduler
-from storage import store, ValidationError
+from storage import (
+    store, ValidationError, get_offline_after_seconds, set_offline_after_seconds,
+)
 
 app = Flask(__name__)
 
@@ -112,6 +114,23 @@ def toggle_equipment(equipment_id):
     if not eq:
         return jsonify({"error": "Equipamento nao encontrado."}), 404
     return jsonify(eq.to_dict())
+
+
+# ---------------- API: configuracoes ----------------
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    return jsonify({"offline_after_seconds": get_offline_after_seconds()})
+
+
+@app.route("/api/settings", methods=["PUT"])
+def update_settings():
+    payload = request.get_json(silent=True) or {}
+    try:
+        seconds = set_offline_after_seconds(payload.get("offline_after_seconds"))
+    except ValidationError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"offline_after_seconds": seconds})
 
 
 # ---------------- API: historico / eventos ----------------

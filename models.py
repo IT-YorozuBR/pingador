@@ -46,6 +46,8 @@ class Equipment:
 
     # falhas de ping consecutivas ainda nao confirmadas como queda
     consecutive_failures: int = 0
+    # inicio da sequencia atual de falhas (base do tempo para considerar offline)
+    first_failure_at: Optional[datetime] = None
 
     # controle interno do agendador (nao exposto na API)
     next_check_at: Optional[datetime] = None
