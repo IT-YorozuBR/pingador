@@ -325,15 +325,18 @@ class InMemoryStore:
             # Queda: estava online (ou aguardando) e virou offline
             if new_status == STATUS_OFFLINE and previous_status != STATUS_OFFLINE:
                 eq.down_count += 1
-                eq.last_down_at = now
+                # a queda comeca no primeiro ping que falhou, nao quando o
+                # tempo de confirmacao foi atingido
+                down_start = eq.first_failure_at or now
+                eq.last_down_at = down_start
                 down_event = Event(
                     id=_next_event_id(),
                     equipment_id=equipment_id,
                     previous_status=previous_status,
                     current_status=new_status,
                     response_time_ms=response_time_ms,
-                    down_at=now,
-                    timestamp=now,
+                    down_at=down_start,
+                    timestamp=down_start,
                 )
                 self.events.append(down_event)
                 self._open_down_event[equipment_id] = down_event
@@ -341,7 +344,7 @@ class InMemoryStore:
                     db.record_event(
                         equipment_id, eq.name, eq.ip, "down", category=eq.category,
                         previous_status=previous_status, current_status=new_status,
-                        response_time_ms=response_time_ms, ts=now,
+                        response_time_ms=response_time_ms, ts=down_start,
                     )
                 except Exception:
                     pass
