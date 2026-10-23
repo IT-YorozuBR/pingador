@@ -68,6 +68,18 @@
             <select id="tl-category" class="tl-input">
                 <option value="">Todas as bases</option>
             </select>
+            <div class="tl-types-wrap">
+                <button id="tl-types-btn" class="tl-types-btn" type="button" aria-expanded="false" title="Escolha tipos de equipamento para esconder da linha do tempo">
+                    TIPOS <b id="tl-types-badge" hidden>0</b>
+                </button>
+                <div class="tl-types-panel" id="tl-types-panel" hidden>
+                    <div class="tl-types-head">
+                        <span>MOSTRAR NA LINHA DO TEMPO</span>
+                        <button id="tl-types-reset" type="button">mostrar todos</button>
+                    </div>
+                    <div class="tl-types-list" id="tl-types-list"></div>
+                </div>
+            </div>
             <div class="tl-range" id="tl-range" role="group" aria-label="Janela de tempo">
                 <button data-range="1h" type="button">1h</button>
                 <button data-range="6h" type="button">6h</button>

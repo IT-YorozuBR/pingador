@@ -95,6 +95,27 @@ let popHideTimer = null;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// tipos (categorias) de equipamento escondidos da linha do tempo
+const HIDDEN_TYPES_KEY = "tl:hiddenTypes";
+const NO_TYPE = "(sem tipo)";
+const hiddenTypes = new Set();
+try {
+    const saved = JSON.parse(localStorage.getItem(HIDDEN_TYPES_KEY) || "[]");
+    if (Array.isArray(saved)) saved.forEach((t) => hiddenTypes.add(t));
+} catch (_) {}
+
+function typeOf(ev) {
+    return ev.category || NO_TYPE;
+}
+
+// um evento do equipamento em foco aparece mesmo se o tipo dele estiver escondido
+function isShown(ev) {
+    if (!state.kinds.has(ev.kind)) return false;
+    if (hiddenTypes.size === 0) return true;
+    if (state.focusEquipmentId != null && ev.equipment_id === state.focusEquipmentId) return true;
+    return !hiddenTypes.has(typeOf(ev));
+}
+
 function parseTs(iso) {
     // timestamps do servidor sao horario local ingenuo -> Date os trata como local
     return new Date(iso).getTime();
@@ -215,7 +236,7 @@ function layout() {
     // 1) coleta os eventos visiveis
     const inView = [];
     for (const ev of state.events) {
-        if (!state.kinds.has(ev.kind)) continue;
+        if (!isShown(ev)) continue;
         const x = xOf(ev.ms);
         if (x < -margin || x > w + margin) continue;
         if (fid == null || ev.equipment_id === fid) visibleCount++;
@@ -333,7 +354,7 @@ function drawEquipTrack(w, margin) {
     const h = stage.clientHeight - AXIS_H;
     const pts = [];
     for (const ev of state.events) {
-        if (ev.equipment_id !== fid || !state.kinds.has(ev.kind)) continue;
+        if (ev.equipment_id !== fid || !isShown(ev)) continue;
         const x = xOf(ev.ms);
         if (x < -margin * 4 || x > w + margin * 4) continue;
         pts.push([x, (stage.clientHeight - AXIS_H) * laneFrac[LANE_OF[ev.kind]]]);
@@ -360,6 +381,7 @@ function layoutOutages(w, margin) {
         for (const ev of state.events) {
             if (ev.kind !== "up" || ev.duration_seconds == null) continue;
             if (fid != null && ev.equipment_id !== fid) continue; // foco: some com o resto
+            if (!isShown(ev)) continue;
             const downMs = ev.ms - ev.duration_seconds * 1000;
             const x1 = xOf(downMs);
             const x2 = xOf(ev.ms);
@@ -1395,6 +1417,7 @@ async function loadEvents(keepView) {
         if (focusEv) focusEv = state.events.find((e) => e.id === focusEv.id) || null;
         notifyNewEvents(!!keepView);
         updateFooter();
+        renderTypes();
         if (!keepView) {
             applyInitialView();
             if (state.focusEquipmentId != null) fitToEquipment();
@@ -1546,6 +1569,71 @@ document.getElementById("tl-search").addEventListener("input", (e) => {
 document.getElementById("tl-category").addEventListener("change", (e) => {
     state.category = e.target.value;
     loadEvents(true);
+});
+
+// ------------------------- esconder tipos de equipamento -------------------------
+
+const typesBtn = document.getElementById("tl-types-btn");
+const typesBadge = document.getElementById("tl-types-badge");
+const typesPanel = document.getElementById("tl-types-panel");
+const typesList = document.getElementById("tl-types-list");
+let typesSignature = "";
+
+function renderTypes() {
+    const counts = new Map();
+    for (const ev of state.events) counts.set(typeOf(ev), (counts.get(typeOf(ev)) || 0) + 1);
+    for (const t of hiddenTypes) if (!counts.has(t)) counts.set(t, 0); // mantem escondidos sem eventos na janela
+    const names = [...counts.keys()].sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+    const sig = names.map((n) => `${n}:${counts.get(n)}:${hiddenTypes.has(n) ? 1 : 0}`).join("|");
+    if (sig !== typesSignature) {
+        typesSignature = sig;
+        typesList.innerHTML = names.length
+            ? names
+                  .map(
+                      (n) =>
+                          `<label class="tl-types-item${hiddenTypes.has(n) ? " off" : ""}">` +
+                          `<input type="checkbox" data-type="${escapeHtml(n)}"${hiddenTypes.has(n) ? "" : " checked"}>` +
+                          `<span class="tl-types-name">${escapeHtml(n)}</span>` +
+                          `<span class="tl-types-count">${counts.get(n)}</span></label>`
+                  )
+                  .join("")
+            : `<div class="tl-types-empty">Nenhum tipo na janela atual.</div>`;
+    }
+    typesBadge.hidden = hiddenTypes.size === 0;
+    typesBadge.textContent = String(hiddenTypes.size);
+}
+
+function saveHiddenTypes() {
+    try { localStorage.setItem(HIDDEN_TYPES_KEY, JSON.stringify([...hiddenTypes])); } catch (_) {}
+}
+
+typesBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    typesPanel.hidden = !typesPanel.hidden;
+    typesBtn.setAttribute("aria-expanded", String(!typesPanel.hidden));
+});
+typesPanel.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", () => {
+    typesPanel.hidden = true;
+    typesBtn.setAttribute("aria-expanded", "false");
+});
+typesList.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[data-type]");
+    if (!cb) return;
+    if (cb.checked) hiddenTypes.delete(cb.dataset.type);
+    else hiddenTypes.add(cb.dataset.type);
+    saveHiddenTypes();
+    renderTypes();
+    unpin();
+    hidePop();
+    scheduleLayout();
+});
+document.getElementById("tl-types-reset").addEventListener("click", () => {
+    hiddenTypes.clear();
+    saveHiddenTypes();
+    renderTypes();
+    scheduleLayout();
 });
 
 // ------------------------- clock + resize + poll -------------------------
